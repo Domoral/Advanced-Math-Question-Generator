@@ -119,13 +119,7 @@ def extract_score(verifier_output: str) -> Optional[float]:
     Returns:
         The extracted score as float, or None if not found
     """
-    # Look for \boxed{number} pattern
     match = re.search(r'\\boxed\{(\d+(?:\.\d+)?)\}', verifier_output)
-    if match:
-        return float(match.group(1))
-    
-    # Fallback: look for "Score: X" pattern
-    match = re.search(r'Score:\s*(\d+(?:\.\d+)?)', verifier_output)
     if match:
         return float(match.group(1))
     
