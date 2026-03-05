@@ -277,36 +277,35 @@ class QuestionMCTS(ABC):
         pass
     
     @abstractmethod
-    def simulate(self, node: QuestionNode) -> float:
+    def simulate(self, node: QuestionNode, alpha: float = 0.5) -> float:
         """
         Simulate/rollout from a node to get a reward.
         
-        For question generation, this involves a two-phase evaluation:
+        This implements a two-phase evaluation strategy:
         
+        Case A: Terminal Node (waiting_knowledge is empty)
+        - Directly evaluate node.question with verifier
+        - reward = verifier_score
+        
+        Case B: Non-Terminal Node
         Phase 1: Evaluate Current Node (Intermediate Quality)
         - Use verifier to evaluate the quality of node's current question
-        - This captures the quality of intermediate products (which can be
-          used as standalone problems if they are high quality)
+        - This captures the quality of intermediate products
+        - If quality >= save_threshold (5.0), save the question immediately
         
-        Phase 2: Evaluate Full Aggregation (Terminal Quality)
-        - Use generator to aggregate ALL remaining waiting_knowledge points
-          into the current question in one step (bypassing gradual expansion)
-        - Use verifier to evaluate this fully-aggregated question
-        - This tests the "potential" of the current path - how good can it
-          become if we continue expanding
+        Phase 2: Evaluate Partial Aggregation (Potential Quality)
+        - Take waiting_knowledge[0:3] (at most first 3 remaining knowledge points)
+        - Use generator to aggregate these into current question in one step
+        - Use verifier to evaluate this virtual question
+        - This tests the "potential" of the current path
         
         Phase 3: Combine Scores
-        - final_score = alpha * current_score + (1 - alpha) * full_agg_score
-        - alpha is a hyperparameter balancing:
-          * Higher alpha: prefer nodes that already have good intermediate quality
-          * Lower alpha: prefer nodes with potential for great final quality
-        - This design acknowledges that:
-          * Intermediate products are valuable (can be used as-is if good)
-          * But one-step full aggregation is unstable (LLM may struggle with
-            too many knowledge points at once), so we don't fully trust it
+        - reward = alpha * current_score + (1 - alpha) * potential_score
+        - alpha (default 0.5): balances current quality vs future potential
         
         Args:
             node: The node to simulate from
+            alpha: Weight for current_score (0.5 means equal weight)
             
         Returns:
             The combined reward (quality score) obtained

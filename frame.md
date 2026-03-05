@@ -1,26 +1,60 @@
 # 高数题目生成器 - 工程框架
 
-## 1. 核心机制
+## 1. MCTS 算法流程
 
-基于蒙特卡洛树搜索（MCTS）逐步聚合知识点生成综合题目。
+### 1.1 Select（选择）
+从 root 开始遍历：
+- 若 cur_node 已完全扩展（子节点数 ≥ 3），选择 UCT 最大的子节点，cur_node 下移，重复
+- 若 cur_node 未完全扩展（子节点数 < 3），进入 Expand
 
-**树结构**：
-- 根节点：空题目，包含完整知识点队列
-- 中间节点：已聚合部分知识点的题目
-- 叶节点：知识点队列为空的最终题目
+### 1.2 Expand（扩展）
+1. 从 cur_node.waiting_knowledge pop 第一个知识点
+2. 调用 generator 与 cur_node.question 聚合，生成新子节点
+3. 新子节点加入 cur_node.children
+4. **cur_node 下移至新子节点**，进入 Rollout
 
-**搜索流程**（标准MCTS四阶段）：
-1. **Select**: UCT策略选择待扩展节点
-2. **Expand**: Generator聚合下一个知识点，生成多个子节点
-3. **Simulate**: Verifier评估当前节点 + 一次性聚合评估，加权得reward
-4. **Backpropagate**: 反向传播更新路径上所有节点的Q、N
+### 1.3 Rollout（模拟/评估）
 
-## 2. 核心模块
+**情况 A：新子节点是叶节点**（waiting_knowledge 为空）
+- 调用 verifier 评估 node.question
+- reward = verifier_score
 
-### 2.1 QuestionNode (`question_node.py`)
+**情况 B：新子节点非叶节点**
+1. 调用 verifier 评估当前 node.question → current_score
+2. 取 waiting_knowledge[0:3]（最多前 3 个），调用 generator 一次性聚合 → virtual_question
+3. 调用 verifier 评估 virtual_question → potential_score
+4. reward = α × current_score + (1-α) × potential_score
 
-节点数据结构：
-```
+### 1.4 Backpropagate（反向传播）
+从 cur_node 沿 parent 链向上：
+- 每个节点：Q += reward, N += 1
+- 直到到达 root
+
+---
+
+## 2. 即时保存机制
+
+任何节点被 verifier 评估后，若质量达标，立即保存：
+- **中间节点**：quality ≥ 5.0/6 → 保存（高质量半成品）
+- **叶节点**：quality ≥ 5.0/6 → 保存（高质量综合题）
+
+保存内容：question, integrated_knowledge, depth, quality_score
+
+---
+
+## 3. 终止条件
+
+满足任一即停止搜索：
+1. **真实叶节点数 ≥ 4**（主要终止条件）
+2. **总迭代次数 ≥ max_iterations**（保护性上限）
+
+---
+
+## 4. 核心模块
+
+### 4.1 QuestionNode (`question_node.py`)
+
+```python
 question: str                          # 当前题目内容
 integrated_knowledge: Set[str]         # 已聚合知识点
 waiting_knowledge: List[str]           # 待聚合知识点（拓扑排序）
@@ -30,90 +64,42 @@ Q: float                               # 累计reward
 N: int                                 # 访问次数
 ```
 
-关键方法：
-- `is_terminal()`: 检查waiting_knowledge是否为空
-- `uct_score()`: 计算UCT分数用于Select阶段
-- `update(reward)`: 更新Q、N统计
+### 4.2 LLM Client (`llm_client.py`)
 
-### 2.2 Prompt Templates (`prompt_templates.py`)
+- **generator(node, new_skill)**：聚合新知识点生成子节点题目
+- **verifier(node)**：评估题目质量，返回六维度评分
+- **extract_score(output)**：从 \boxed{} 中提取分数
 
-**question_generator**: 
-- 输入：existing_problem, existing_skills, new_skill, reference_examples
-- 输出：key-value格式的新题目（problem_statement, final_answer等）
+### 4.3 Prompt Templates (`prompt_templates.py`)
 
-**question_verifier**:
-- 输入：problem_statement, required_skills, reference_examples  
-- 输出：六维度评分（Single Answer, Exact Answer, Dual Skill Integration, Clarity, Tractability, Grammar）
-- 总分：\boxed{score} 格式便于提取
-
-### 2.3 QuestionMCTS (抽象类，`question_node.py`)
-
-需实现四个接口：
-- `select(root)`: UCT遍历选择节点
-- `expand(node)`: 调用Generator生成子节点
-- `simulate(node)`: 双阶段评估（当前节点 + 一次性全聚合）
-- `backpropagate(node, reward)`: 反向传播更新统计
-
-## 3. Simulate策略详解
-
-```
-reward = α * current_score + (1-α) * full_agg_score
-```
-
-| 阶段 | 操作 | 目的 |
-|-----|------|------|
-| current_score | Verifier评估node.question | 衡量中间产物可用性 |
-| full_agg_score | Generator一次性聚合所有waiting_knowledge，Verifier评估 | 衡量路径潜力 |
-| α | 超参数（默认0.5） | 平衡当前质量 vs 未来潜力 |
-
-## 4. 数据结构
-
-### 4.1 知识点拓扑
-
-```python
-knowledge_topology = {
-    "不定积分": ["定积分"],      # 不定积分是定积分的前置
-    "定积分": ["重积分", "曲线积分"],
-    "导数定义": ["微分中值定理"],
-    # ...
-}
-```
-
-初始化时根据拓扑关系对waiting_knowledge排序。
-
-### 4.2 参考题库
-
-```python
-reference_bank = {
-    "不定积分": [
-        {"question": "...", "difficulty": 3, "answer": "..."},
-        # ...
-    ],
-    # ...
-}
-```
-
-Expand阶段从中选取参考样例传入Generator。
-
-## 5. 关键超参数
-
-| 参数 | 说明 | 建议值 |
-|-----|------|-------|
-| exploration_weight (c) | UCT探索系数 | 1.414 |
-| α | Simulate阶段当前分权重 | 0.5 |
-| num_children_per_expand | 每次扩展生成的子节点数 | 3-5 |
-| max_iterations | MCTS最大迭代次数 | 100-500 |
-| top_k_keep | 每层保留的高质量节点数 | 5-10 |
-
-## 6. 实现优先级
-
-1. **基础框架**：QuestionNode + Prompt Templates
-2. **MCTS核心**：实现四个抽象接口
-3. **评估管线**：Verifier调用 + 分数提取
-4. **聚合策略**：Generator调用 + 子节点生成
-5. **优化增强**：剪枝策略、并行搜索、结果缓存
+- **question_generator**：输入 existing_problem, new_skill，输出 key-value 格式新题目
+- **question_verifier**：输入 problem_statement，输出六维度评分 + \boxed{total_score}
 
 ---
 
-*版本: v2.0*  
-*基于: prompt_templates.py, question_node.py*
+## 5. 超参数设置
+
+| 参数 | 值 | 说明 |
+|-----|---|------|
+| exploration_weight (c) | 1.414 | UCT 探索系数 |
+| α | 0.5 | Rollout 中 current_score 权重 |
+| children_per_node | 3 | 每个节点最大子节点数（完全扩展阈值）|
+| max_rollout_knowledge | 3 | Rollout 虚拟聚合时最多取前 3 个知识点 |
+| target_leaf_nodes | 4 | 终止条件：真实叶节点数 |
+| save_threshold | 5.0 | 保存阈值（中间节点和叶节点相同）|
+| max_iterations | 100-500 | 保护性迭代上限 |
+
+---
+
+## 6. 实现优先级
+
+1. **基础框架**：QuestionNode + Prompt Templates + LLM Client
+2. **MCTS 核心**：实现 Select/Expand/Rollout/Backpropagate
+3. **即时保存**：质量达标节点保存到文件
+4. **终止控制**：叶节点计数 + 迭代上限
+5. **实验调优**：根据实验结果调整超参数
+
+---
+
+*版本: v3.0*  
+*更新: 2026-03-01*
