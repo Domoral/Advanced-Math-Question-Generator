@@ -1,0 +1,11 @@
+# Advanced Math Question Generator - Python Dependencies
+
+# LLM API Client
+openai>=1.0.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# GUI (optional, for knowledge_selector.py)
+# tkinter is included with standard Python on Windows
+# On Linux: sudo apt-get install python3-tk
