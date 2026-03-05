@@ -29,7 +29,7 @@ client = OpenAI(
 MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-reasoner")
 
 
-def generator(node: QuestionNode, new_skill: str, reference_examples: str) -> str:
+def generator(node: QuestionNode, new_skill: str, reference_examples: Optional[str] = None) -> str:
     """
     Generate a new math problem by integrating a new skill into the existing problem.
     
@@ -38,7 +38,7 @@ def generator(node: QuestionNode, new_skill: str, reference_examples: str) -> st
     Args:
         node: The current QuestionNode containing the existing problem
         new_skill: The new knowledge point to integrate
-        reference_examples: Reference examples for the new skill from the question bank
+        reference_examples: Reference examples for the new skill (optional, defaults to None)
         
     Returns:
         The raw LLM response string (key-value format, to be parsed by caller)
@@ -46,6 +46,10 @@ def generator(node: QuestionNode, new_skill: str, reference_examples: str) -> st
     # Get existing problem and skills from node
     existing_problem = node.question if node.question else "(Empty - this is the root node)"
     existing_skills = ", ".join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else "None"
+    
+    # Handle None reference_examples
+    if reference_examples is None:
+        reference_examples = "No reference examples provided. Please use your knowledge to generate an appropriate problem."
     
     # Format the prompt
     prompt = prompt_templates["question_generator"].format(

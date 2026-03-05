@@ -5,9 +5,12 @@ This module defines the QuestionNode class used in the MCTS tree for generating
 integrated mathematics problems by progressively combining knowledge points.
 """
 
-from abc import ABC, abstractmethod
 from typing import List, Optional, Set
+from llm_client import generator, verifier, extract_score, parse_generator_output
 import math
+import json
+import os
+from datetime import datetime
 
 
 class QuestionNode:
@@ -69,15 +72,12 @@ class QuestionNode:
     
     def is_fully_expanded(self) -> bool:
         """
-        Check if all possible children have been generated.
-        
-        In practice, this depends on how many aggregation strategies
-        and reference questions we want to try for the next knowledge point.
+        Check if node has reached max children (3).
         
         Returns:
-            True if children list is non-empty (simplified assumption)
+            True if children count >= 3
         """
-        return len(self.children) > 0
+        return len(self.children) >= 3
     
     def next_knowledge_point(self) -> Optional[str]:
         """
@@ -224,32 +224,41 @@ class QuestionNode:
         )
 
 
-class QuestionMCTS(ABC): 
+class QuestionMCTS:
     """
-    Abstract base class for MCTS algorithm adapted for question generation.
-    
-    Subclasses must implement the abstract methods to define:
-    - How to select nodes (select)
-    - How to expand nodes (expand)
-    - How to simulate/rollout (simulate)
-    - How to backpropagate rewards (backpropagate)
+    MCTS algorithm implementation for math question generation.
     """
     
-    def __init__(self, exploration_weight: float = 1.414):
+    def __init__(
+        self,
+        exploration_weight: float = 1.414,
+        alpha: float = 0.5,
+        save_threshold: float = 5.0,
+        output_dir: str = "./output"
+    ):
         """
         Initialize the MCTS searcher.
         
         Args:
             exploration_weight: The 'c' parameter for UCT calculation
+            alpha: Weight for current_score in simulate (0.5 means equal weight)
+            save_threshold: Quality threshold for saving questions (default 5.0)
+            output_dir: Directory to save generated questions
         """
         self.exploration_weight = exploration_weight
+        self.alpha = alpha
+        self.save_threshold = save_threshold
+        self.output_dir = output_dir
+        self.leaf_count = 0  # Count of terminal nodes generated
+        
+        # Create output directory if not exists
+        os.makedirs(output_dir, exist_ok=True)
     
-    @abstractmethod
     def select(self, root: QuestionNode) -> QuestionNode:
         """
         Select a node to expand using UCT strategy.
         
-        Traverse the tree from root, selecting child with highest UCT score
+        Traverse from root, selecting child with highest UCT score
         until reaching a node that is not fully expanded.
         
         Args:
@@ -258,81 +267,166 @@ class QuestionMCTS(ABC):
         Returns:
             The selected node for expansion
         """
-        pass
-    
-    @abstractmethod
-    def expand(self, node: QuestionNode) -> List[QuestionNode]:
-        """
-        Expand a node by generating its children.
+        node = root
         
-        Generate multiple candidate problems by integrating the next
-        knowledge point in different ways.
+        while node.is_fully_expanded() and not node.is_terminal():
+            # Select child with highest UCT score
+            if not node.children:
+                break
+            node = max(node.children, key=lambda c: c.uct_score(self.exploration_weight))
+        
+        return node
+    
+    def expand(self, node: QuestionNode) -> QuestionNode:
+        """
+        Expand a node by generating a new child.
+        
+        Pop the first knowledge point from waiting_knowledge,
+        use generator to create a new integrated problem.
         
         Args:
             node: The node to expand
             
         Returns:
-            List of generated child nodes
+            The newly generated child node
         """
-        pass
+        if node.is_terminal():
+            raise RuntimeError("Cannot expand terminal node")
+        
+        # Get next knowledge point
+        new_skill = node.waiting_knowledge[0]
+        remaining = node.waiting_knowledge[1:]
+        
+        # Generate new problem using LLM
+        try:
+            raw_output = generator(node, new_skill)
+            parsed = parse_generator_output(raw_output)
+            
+            # Create child node
+            child = QuestionNode(
+                question=parsed.get('problem_statement', ''),
+                integrated_knowledge=node.integrated_knowledge | {new_skill},
+                waiting_knowledge=remaining,
+                parent=node
+            )
+            
+            # Copy metadata
+            child.metadata['generation_step'] = node.depth() + 1
+            child.metadata['merge_strategy'] = parsed.get('integration_rationale', '')
+            
+            node.add_child(child)
+            return child
+            
+        except Exception as e:
+            # If generation fails, create a fallback child with error marker
+            child = QuestionNode(
+                question=f"[Generation Error: {str(e)}]",
+                integrated_knowledge=node.integrated_knowledge | {new_skill},
+                waiting_knowledge=remaining,
+                parent=node
+            )
+            node.add_child(child)
+            return child
     
-    @abstractmethod
-    def simulate(self, node: QuestionNode, alpha: float = 0.5) -> float:
+    def simulate(self, node: QuestionNode) -> float:
         """
         Simulate/rollout from a node to get a reward.
         
-        This implements a two-phase evaluation strategy:
-        
-        Case A: Terminal Node (waiting_knowledge is empty)
-        - Directly evaluate node.question with verifier
-        - reward = verifier_score
-        
-        Case B: Non-Terminal Node
-        Phase 1: Evaluate Current Node (Intermediate Quality)
-        - Use verifier to evaluate the quality of node's current question
-        - This captures the quality of intermediate products
-        - If quality >= save_threshold (5.0), save the question immediately
-        
-        Phase 2: Evaluate Partial Aggregation (Potential Quality)
-        - Take waiting_knowledge[0:3] (at most first 3 remaining knowledge points)
-        - Use generator to aggregate these into current question in one step
-        - Use verifier to evaluate this virtual question
-        - This tests the "potential" of the current path
-        
-        Phase 3: Combine Scores
-        - reward = alpha * current_score + (1 - alpha) * potential_score
-        - alpha (default 0.5): balances current quality vs future potential
+        Case A: Terminal Node - directly evaluate with verifier
+        Case B: Non-Terminal Node - two-phase evaluation
         
         Args:
             node: The node to simulate from
-            alpha: Weight for current_score (0.5 means equal weight)
             
         Returns:
             The combined reward (quality score) obtained
         """
-        pass
+        # Case A: Terminal node
+        if node.is_terminal():
+            try:
+                verifier_output = verifier(node)
+                score = extract_score(verifier_output)
+                if score is None:
+                    score = 0.0
+                
+                # Save if quality meets threshold
+                if score >= self.save_threshold:
+                    self.save_question(node, score)
+                
+                return score
+            except Exception:
+                return 0.0
+        
+        # Case B: Non-terminal node - two-phase evaluation
+        # Phase 1: Evaluate current node
+        try:
+            verifier_output = verifier(node)
+            current_score = extract_score(verifier_output)
+            if current_score is None:
+                current_score = 0.0
+            
+            # Save if quality meets threshold
+            if current_score >= self.save_threshold:
+                self.save_question(node, current_score)
+        except Exception:
+            current_score = 0.0
+        
+        # Phase 2: Evaluate potential (partial aggregation)
+        try:
+            # Take at most first 3 remaining knowledge points
+            knowledge_to_test = node.waiting_knowledge[:3]
+            if knowledge_to_test:
+                # Convert list to combined string
+                combined_skill = "、".join(knowledge_to_test)
+                
+                # Generate virtual question
+                virtual_output = generator(node, combined_skill)
+                virtual_parsed = parse_generator_output(virtual_output)
+                
+                # Create temporary node for verification
+                temp_node = QuestionNode(
+                    question=virtual_parsed.get('problem_statement', ''),
+                    integrated_knowledge=node.integrated_knowledge | set(knowledge_to_test),
+                    waiting_knowledge=[]  # Virtual node is terminal
+                )
+                
+                # Verify virtual question
+                virtual_verifier_output = verifier(temp_node)
+                potential_score = extract_score(virtual_verifier_output)
+                if potential_score is None:
+                    potential_score = 0.0
+            else:
+                potential_score = current_score
+        except Exception:
+            potential_score = 0.0
+        
+        # Phase 3: Combine scores
+        reward = self.alpha * current_score + (1 - self.alpha) * potential_score
+        return reward
     
-    @abstractmethod
-    def save_question(self, node: QuestionNode, score: float, file_path: str):
+    def save_question(self, node: QuestionNode, score: float):
         """
         Save a high-quality question to JSON file.
         
-        Called immediately after a node is evaluated and its quality score
-        meets or exceeds the save threshold (5.0).
-        
-        Saved fields:
-        - question: The problem statement
-        - integrated_knowledge: List of knowledge points in the question
-        - quality_score: The verifier score
-        
         Args:
             node: The QuestionNode containing the question to save
-            score: The quality score from verifier (>= 5.0)
-            file_path: Path to the output JSON file
+            score: The quality score from verifier (>= save_threshold)
         """
-        pass
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prefix = "terminal" if node.is_terminal() else "intermediate"
+        filename = f"{prefix}_{timestamp}.json"
+        filepath = os.path.join(self.output_dir, filename)
+        
+        data = {
+            "question": node.question,
+            "integrated_knowledge": sorted(list(node.integrated_knowledge)),
+            "quality_score": score,
+            "timestamp": timestamp
+        }
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     
-    @abstractmethod
     def backpropagate(self, node: QuestionNode, reward: float):
         """
         Backpropagate the reward up the tree.
@@ -343,18 +437,50 @@ class QuestionMCTS(ABC):
             node: The node where simulation ended
             reward: The reward to backpropagate
         """
-        pass
+        current = node
+        while current is not None:
+            current.update(reward)
+            current = current.parent
     
-    @abstractmethod
-    def search(self, root: QuestionNode, num_iterations: int) -> QuestionNode:
+    def search(
+        self,
+        root: QuestionNode,
+        max_iterations: int = 100,
+        target_leaf_nodes: int = 4
+    ):
         """
-        Run MCTS search for a given number of iterations.
+        Run MCTS search.
+        
+        High-quality questions are saved to files during simulation via
+        save_question method. No return value needed.
         
         Args:
             root: The root node
-            num_iterations: Number of MCTS iterations to run
-            
-        Returns:
-            The best node found (typically highest average reward)
+            max_iterations: Maximum number of MCTS iterations
+            target_leaf_nodes: Stop when this many terminal nodes are generated
         """
-        pass
+        self.leaf_count = 0
+        
+        for iteration in range(max_iterations):
+            # Check termination condition
+            if self.leaf_count >= target_leaf_nodes:
+                break
+            
+            # 1. Select
+            selected = self.select(root)
+            
+            # 2. Expand (if not terminal)
+            if not selected.is_terminal():
+                new_node = self.expand(selected)
+                # Move to newly expanded node for simulation
+                selected = new_node
+            
+            # Count if this is a new terminal node
+            if selected.is_terminal() and selected.N == 0:
+                self.leaf_count += 1
+            
+            # 3. Simulate
+            reward = self.simulate(selected)
+            
+            # 4. Backpropagate
+            self.backpropagate(selected, reward)
