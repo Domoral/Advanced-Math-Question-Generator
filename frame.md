@@ -70,7 +70,17 @@ N: int                                 # 访问次数
 - **verifier(node)**：评估题目质量，返回六维度评分
 - **extract_score(output)**：从 \boxed{} 中提取分数
 
-### 4.3 Prompt Templates (`prompt_templates.py`)
+### 4.3 QuestionMCTS 抽象类 (`question_node.py`)
+
+需实现五个接口：
+- `select(root)`：UCT遍历选择待扩展节点
+- `expand(node)`：Generator聚合下一个知识点，生成子节点
+- `simulate(node, alpha)`：双阶段评估（当前节点 + 虚拟聚合），返回reward
+- `save_question(node, score, file_path)`：保存高质量题目到JSON
+- `backpropagate(node, reward)`：反向传播更新路径上节点统计
+- `search(root, num_iterations)`：主搜索循环
+
+### 4.4 Prompt Templates (`prompt_templates.py`)
 
 - **question_generator**：输入 existing_problem, new_skill，输出 key-value 格式新题目
 - **question_verifier**：输入 problem_statement，输出六维度评分 + \boxed{total_score}

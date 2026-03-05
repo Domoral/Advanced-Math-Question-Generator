@@ -313,6 +313,26 @@ class QuestionMCTS(ABC):
         pass
     
     @abstractmethod
+    def save_question(self, node: QuestionNode, score: float, file_path: str):
+        """
+        Save a high-quality question to JSON file.
+        
+        Called immediately after a node is evaluated and its quality score
+        meets or exceeds the save threshold (5.0).
+        
+        Saved fields:
+        - question: The problem statement
+        - integrated_knowledge: List of knowledge points in the question
+        - quality_score: The verifier score
+        
+        Args:
+            node: The QuestionNode containing the question to save
+            score: The quality score from verifier (>= 5.0)
+            file_path: Path to the output JSON file
+        """
+        pass
+    
+    @abstractmethod
     def backpropagate(self, node: QuestionNode, reward: float):
         """
         Backpropagate the reward up the tree.
