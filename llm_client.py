@@ -8,12 +8,14 @@ This module provides functions to interact with DeepSeek API for:
 
 import os
 import re
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from prompt_templates_EN import prompt_templates
-from question_node import QuestionNode
+from prompt_templates_CN import prompt_templates
+
+if TYPE_CHECKING:
+    from question_node import QuestionNode
 
 
 # Load environment variables
@@ -29,7 +31,7 @@ client = OpenAI(
 MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-reasoner")
 
 
-def generator(node: QuestionNode, new_skill: str, reference_examples: Optional[str] = None) -> str:
+def generator(node: 'QuestionNode', new_skill: str, reference_examples: Optional[str] = None) -> str:
     """
     Generate a new math problem by integrating a new skill into the existing problem.
     
@@ -67,13 +69,13 @@ def generator(node: QuestionNode, new_skill: str, reference_examples: Optional[s
             {"role": "user", "content": prompt}
         ],
         temperature=0.7,
-        max_tokens=2048
+        max_tokens=8192
     )
     
     return response.choices[0].message.content
 
 
-def verifier(node: QuestionNode, reference_examples: str) -> str:
+def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None) -> str:
     """
     Verify and score a math problem using the verifier prompt template.
     
@@ -81,7 +83,7 @@ def verifier(node: QuestionNode, reference_examples: str) -> str:
     
     Args:
         node: The QuestionNode containing the problem to verify
-        reference_examples: Reference examples for difficulty comparison
+        reference_examples: Reference examples for difficulty comparison (optional)
         
     Returns:
         The raw LLM response string (containing detailed evaluation and \boxed{score})
@@ -89,6 +91,10 @@ def verifier(node: QuestionNode, reference_examples: str) -> str:
     # Get problem and required skills from node
     problem_statement = node.question
     required_skills = ", ".join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else "None"
+    
+    # Handle None reference_examples
+    if reference_examples is None:
+        reference_examples = "No reference examples provided. Please evaluate based on your knowledge of standard difficulty levels."
     
     # Format the prompt
     prompt = prompt_templates["question_verifier"].format(
@@ -105,7 +111,7 @@ def verifier(node: QuestionNode, reference_examples: str) -> str:
             {"role": "user", "content": prompt}
         ],
         temperature=0.3,  # Lower temperature for more consistent evaluation
-        max_tokens=2048
+        max_tokens=8192
     )
     
     return response.choices[0].message.content

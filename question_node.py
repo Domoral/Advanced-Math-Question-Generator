@@ -234,7 +234,7 @@ class QuestionMCTS:
         exploration_weight: float = 1.414,
         alpha: float = 0.5,
         save_threshold: float = 5.0,
-        output_dir: str = "./output"
+        output_dir: str = "./generated_question"
     ):
         """
         Initialize the MCTS searcher.
@@ -267,14 +267,18 @@ class QuestionMCTS:
         Returns:
             The selected node for expansion
         """
+        print("  [Select] 开始选择节点...")
         node = root
+        depth = 0
         
         while node.is_fully_expanded() and not node.is_terminal():
             # Select child with highest UCT score
             if not node.children:
                 break
             node = max(node.children, key=lambda c: c.uct_score(self.exploration_weight))
+            depth += 1
         
+        print(f"  [Select] 完成选择节点 (深度: {depth}, 已综合: {len(node.integrated_knowledge)} 个知识点)")
         return node
     
     def expand(self, node: QuestionNode) -> QuestionNode:
@@ -297,6 +301,8 @@ class QuestionMCTS:
         new_skill = node.waiting_knowledge[0]
         remaining = node.waiting_knowledge[1:]
         
+        print(f"  [Expand] 开始扩展节点，添加知识点: {new_skill}...")
+        
         # Generate new problem using LLM
         try:
             raw_output = generator(node, new_skill)
@@ -315,10 +321,12 @@ class QuestionMCTS:
             child.metadata['merge_strategy'] = parsed.get('integration_rationale', '')
             
             node.add_child(child)
+            print(f"  [Expand] 完成扩展节点 (子节点数: {len(node.children)})")
             return child
             
         except Exception as e:
             # If generation fails, create a fallback child with error marker
+            print(f"  [Expand] 扩展失败: {str(e)}")
             child = QuestionNode(
                 question=f"[Generation Error: {str(e)}]",
                 integrated_knowledge=node.integrated_knowledge | {new_skill},
@@ -341,8 +349,12 @@ class QuestionMCTS:
         Returns:
             The combined reward (quality score) obtained
         """
+        is_terminal = node.is_terminal()
+        node_type = "终端" if is_terminal else "中间"
+        print(f"  [Simulate] 开始模拟评估 ({node_type}节点)...")
+        
         # Case A: Terminal node
-        if node.is_terminal():
+        if is_terminal:
             try:
                 verifier_output = verifier(node)
                 score = extract_score(verifier_output)
@@ -352,13 +364,18 @@ class QuestionMCTS:
                 # Save if quality meets threshold
                 if score >= self.save_threshold:
                     self.save_question(node, score)
+                    print(f"  [Simulate] 完成评估，得分: {score:.2f} (已保存)")
+                else:
+                    print(f"  [Simulate] 完成评估，得分: {score:.2f}")
                 
                 return score
-            except Exception:
+            except Exception as e:
+                print(f"  [Simulate] 评估失败: {str(e)}")
                 return 0.0
         
         # Case B: Non-terminal node - two-phase evaluation
         # Phase 1: Evaluate current node
+        print(f"    [Simulate-Phase1] 评估当前节点...")
         try:
             verifier_output = verifier(node)
             current_score = extract_score(verifier_output)
@@ -368,10 +385,15 @@ class QuestionMCTS:
             # Save if quality meets threshold
             if current_score >= self.save_threshold:
                 self.save_question(node, current_score)
-        except Exception:
+                print(f"    [Simulate-Phase1] 当前节点得分: {current_score:.2f} (已保存)")
+            else:
+                print(f"    [Simulate-Phase1] 当前节点得分: {current_score:.2f}")
+        except Exception as e:
+            print(f"    [Simulate-Phase1] 评估失败: {str(e)}")
             current_score = 0.0
         
         # Phase 2: Evaluate potential (partial aggregation)
+        print(f"    [Simulate-Phase2] 评估潜在能力...")
         try:
             # Take at most first 3 remaining knowledge points
             knowledge_to_test = node.waiting_knowledge[:3]
@@ -395,13 +417,17 @@ class QuestionMCTS:
                 potential_score = extract_score(virtual_verifier_output)
                 if potential_score is None:
                     potential_score = 0.0
+                print(f"    [Simulate-Phase2] 潜在得分: {potential_score:.2f}")
             else:
                 potential_score = current_score
-        except Exception:
+                print(f"    [Simulate-Phase2] 无剩余知识点，跳过")
+        except Exception as e:
+            print(f"    [Simulate-Phase2] 评估失败: {str(e)}")
             potential_score = 0.0
         
         # Phase 3: Combine scores
         reward = self.alpha * current_score + (1 - self.alpha) * potential_score
+        print(f"  [Simulate] 完成评估，综合得分: {reward:.2f} (当前{current_score:.2f} * {self.alpha} + 潜在{potential_score:.2f} * {1-self.alpha})")
         return reward
     
     def save_question(self, node: QuestionNode, score: float):
@@ -437,10 +463,14 @@ class QuestionMCTS:
             node: The node where simulation ended
             reward: The reward to backpropagate
         """
+        print(f"  [Backpropagate] 开始回溯传播 (奖励: {reward:.2f})...")
         current = node
+        depth = 0
         while current is not None:
             current.update(reward)
+            depth += 1
             current = current.parent
+        print(f"  [Backpropagate] 完成回溯传播 (更新 {depth} 个节点)")
     
     def search(
         self,
@@ -462,8 +492,11 @@ class QuestionMCTS:
         self.leaf_count = 0
         
         for iteration in range(max_iterations):
+            print(f"\n[迭代 {iteration + 1}/{max_iterations}] 开始 MCTS 循环...")
+            
             # Check termination condition
             if self.leaf_count >= target_leaf_nodes:
+                print(f"\n已达到目标终端节点数 ({target_leaf_nodes})，停止搜索。")
                 break
             
             # 1. Select
@@ -478,9 +511,14 @@ class QuestionMCTS:
             # Count if this is a new terminal node
             if selected.is_terminal() and selected.N == 0:
                 self.leaf_count += 1
+                print(f"  [信息] 生成新的终端节点 (当前: {self.leaf_count}/{target_leaf_nodes})")
             
             # 3. Simulate
             reward = self.simulate(selected)
             
             # 4. Backpropagate
             self.backpropagate(selected, reward)
+            
+            print(f"[迭代 {iteration + 1}] 完成")
+        
+        print(f"\n[搜索结束] 共执行 {iteration + 1} 次迭代，生成 {self.leaf_count} 个终端节点")
