@@ -133,6 +133,7 @@ def extract_score(verifier_output: str) -> Optional[float]:
 def parse_generator_output(output: str) -> dict:
     """
     Parse the key-value output from generator function.
+    Supports both English and Chinese format outputs.
     
     Args:
         output: The raw output from generator function
@@ -142,7 +143,7 @@ def parse_generator_output(output: str) -> dict:
     """
     result = {}
     
-    # Extract triple-quoted fields
+    # Extract triple-quoted fields (English format)
     # problem_statement
     match = re.search(r'problem_statement:\s*"""(.*?)"""', output, re.DOTALL)
     if match:
@@ -153,7 +154,7 @@ def parse_generator_output(output: str) -> dict:
     if match:
         result['solution_path'] = match.group(1).strip()
     
-    # Extract single-line fields
+    # Extract single-line fields (English format)
     # integration_rationale
     match = re.search(r'integration_rationale:\s*(.+?)(?:\n|$)', output)
     if match:
@@ -174,5 +175,30 @@ def parse_generator_output(output: str) -> dict:
     if match:
         skills = match.group(1).strip()
         result['prerequisite_skills'] = [s.strip() for s in skills.split(',')]
+    
+    # Extract Chinese format fields (if English format not found)
+    # 新题目 (New Problem) -> problem_statement
+    if 'problem_statement' not in result:
+        match = re.search(r'###\s*新题目\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+        if match:
+            result['problem_statement'] = match.group(1).strip()
+    
+    # 预期解题路径 (Expected Solution Path) -> solution_path
+    if 'solution_path' not in result:
+        match = re.search(r'###\s*预期解题路径\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+        if match:
+            result['solution_path'] = match.group(1).strip()
+    
+    # 融合原理 (Integration Rationale) -> integration_rationale
+    if 'integration_rationale' not in result:
+        match = re.search(r'###\s*融合原理\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+        if match:
+            result['integration_rationale'] = match.group(1).strip()
+    
+    # 最终答案 (Final Answer) -> final_answer
+    if 'final_answer' not in result:
+        match = re.search(r'###\s*最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+        if match:
+            result['final_answer'] = match.group(1).strip()
     
     return result
