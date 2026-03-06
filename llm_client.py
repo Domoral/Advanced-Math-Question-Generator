@@ -12,7 +12,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from prompt_templates import prompt_templates
+from prompt_templates_EN import prompt_templates
 from question_node import QuestionNode
 
 
