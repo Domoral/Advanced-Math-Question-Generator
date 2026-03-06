@@ -38,7 +38,7 @@ python main.py
 运行后：
 1. 在弹出的 GUI 中选择需要综合的知识点
 2. 系统自动执行 MCTS 搜索生成题目
-3. 高质量题目将保存到 `generated_questions/` 目录
+3. 高质量题目将保存到 `generated_question/` 目录
 
 ## 文件结构
 
@@ -51,7 +51,7 @@ python main.py
 ├── prompt_templates_EN.py      # 英文提示词模板
 ├── prompt_templates_CN.py      # 中文提示词模板
 ├── .env                        # API Key 配置文件（需自行创建）
-└── generated_questions/        # 生成的题目保存目录
+└── generated_question/        # 生成的题目保存目录
 ```
 
 ## 各文件介绍
@@ -118,7 +118,7 @@ mcts = QuestionMCTS(
     exploration_weight=1.414,  # UCT 探索参数
     alpha=0.5,                 # 当前得分与潜在得分的权重
     save_threshold=5.0,        # 保存题目的最低质量分数
-    output_dir="./generated_questions"  # 输出目录
+    output_dir="./generated_question"  # 输出目录
 )
 ```
 
