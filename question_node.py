@@ -6,7 +6,7 @@ integrated mathematics problems by progressively combining knowledge points.
 """
 
 from typing import List, Optional, Set
-from llm_client import generator, verifier, extract_score, parse_generator_output
+from llm_client import generator, verifier, extract_score, parse_generator_output, parse_verifier_output
 import math
 import json
 import os
@@ -31,7 +31,9 @@ class QuestionNode:
         question: str = "",
         integrated_knowledge: Optional[Set[str]] = None,
         waiting_knowledge: Optional[List[str]] = None,
-        parent: Optional['QuestionNode'] = None
+        parent: Optional['QuestionNode'] = None,
+        difficulty_range: Optional[tuple] = None,
+        question_type: Optional[str] = None
     ):
         """
         Initialize a QuestionNode.
@@ -41,11 +43,29 @@ class QuestionNode:
             integrated_knowledge: Set of knowledge points already in the question
             waiting_knowledge: Ordered list of knowledge points to be added
             parent: Parent node in the MCTS tree
+            difficulty_range: Tuple of (min_difficulty, max_difficulty) for target difficulty range
+            question_type: Type of question (单选题/多选题/填空题/计算题/证明题/应用题)
         """
         self.question = question
         self.integrated_knowledge = integrated_knowledge or set()
         self.waiting_knowledge = waiting_knowledge or []
         self.parent = parent
+        
+        # Difficulty range (inherited from parent if not specified)
+        if difficulty_range is not None:
+            self.difficulty_range = difficulty_range
+        elif parent is not None:
+            self.difficulty_range = parent.difficulty_range
+        else:
+            self.difficulty_range = (0.3, 0.7)  # Default range
+        
+        # Question type (inherited from parent if not specified)
+        if question_type is not None:
+            self.question_type = question_type
+        elif parent is not None:
+            self.question_type = parent.question_type
+        else:
+            self.question_type = "计算题"  # Default type
         
         # MCTS statistics
         self.Q = 0.0  # Total reward (sum of quality scores)
@@ -233,8 +253,10 @@ class QuestionMCTS:
         self,
         exploration_weight: float = 1.414,
         alpha: float = 0.5,
-        save_threshold: float = 5.0,
-        output_dir: str = "./generated_question"
+        save_threshold: float = 7.5,
+        output_dir: str = "./generated_question",
+        difficulty_range: tuple = (0.3, 0.7),
+        question_type: str = "计算题"
     ):
         """
         Initialize the MCTS searcher.
@@ -243,16 +265,27 @@ class QuestionMCTS:
             exploration_weight: The 'c' parameter for UCT calculation
             alpha: Weight for current_score in simulate (0.5 means equal weight)
             save_threshold: Quality threshold for saving questions (default 5.0)
-            output_dir: Directory to save generated questions
+            output_dir: Base directory to save generated questions
+            difficulty_range: Target difficulty range (min, max)
+            question_type: Target question type
         """
         self.exploration_weight = exploration_weight
         self.alpha = alpha
         self.save_threshold = save_threshold
-        self.output_dir = output_dir
         self.leaf_count = 0  # Count of terminal nodes generated
+        self.difficulty_range = difficulty_range
+        self.question_type = question_type
+        
+        # Create timestamped subdirectory for this run
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.output_dir = os.path.join(output_dir, timestamp)
         
         # Create output directory if not exists
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        print(f"[INFO] 输出目录: {self.output_dir}")
+        print(f"[INFO] 难度区间: {difficulty_range[0]:.1f} - {difficulty_range[1]:.1f}")
+        print(f"[INFO] 题型: {question_type}")
     
     def select(self, root: QuestionNode) -> QuestionNode:
         """
@@ -305,8 +338,19 @@ class QuestionMCTS:
         
         # Generate new problem using LLM
         try:
-            raw_output = generator(node, new_skill)
+            raw_output = generator(node, new_skill, difficulty_range=self.difficulty_range, question_type=self.question_type)
+            
+            print(f"  [Expand] Generator 原始输出:")
+            print(f"    - 长度: {len(raw_output)}")
+            print(f"    - 前500字符: {raw_output[:500]}")
+            
             parsed = parse_generator_output(raw_output)
+            
+            print(f"  [Expand] Parser 提取结果:")
+            print(f"    - problem_statement: {repr(parsed.get('problem_statement', 'NOT FOUND'))}")
+            print(f"    - integration_rationale: {repr(parsed.get('integration_rationale', 'NOT FOUND'))}")
+            print(f"    - final_answer: {repr(parsed.get('final_answer', 'NOT FOUND'))}")
+            print(f"    - solution_path: {repr(parsed.get('solution_path', 'NOT FOUND'))}")
             
             # Create child node
             child = QuestionNode(
@@ -319,6 +363,8 @@ class QuestionMCTS:
             # Copy metadata
             child.metadata['generation_step'] = node.depth() + 1
             child.metadata['merge_strategy'] = parsed.get('integration_rationale', '')
+            child.metadata['solution_method'] = parsed.get('solution_method', '')
+            child.metadata['final_answer'] = parsed.get('final_answer', '')
             
             node.add_child(child)
             print(f"  [Expand] 完成扩展节点 (子节点数: {len(node.children)})")
@@ -356,10 +402,23 @@ class QuestionMCTS:
         # Case A: Terminal node
         if is_terminal:
             try:
-                verifier_output = verifier(node)
+                verifier_output = verifier(node, difficulty_range=self.difficulty_range)
+                print(f"    [Simulate] Verifier 原始输出:")
+                print(f"{'='*60}")
+                print(verifier_output)
+                print(f"{'='*60}")
+                
+                parsed_verifier = parse_verifier_output(verifier_output)
                 score = extract_score(verifier_output)
                 if score is None:
                     score = 0.0
+                
+                print(f"    [Simulate] Verifier 详细评价:")
+                print(f"      - 总分: {parsed_verifier['total_score']}")
+                for dim_name, dim_score in parsed_verifier['scores'].items():
+                    print(f"      - {dim_name}: {dim_score}分")
+                if parsed_verifier['overall_evaluation']:
+                    print(f"      - 总体评估: {parsed_verifier['overall_evaluation'][:100]}...")
                 
                 # Save if quality meets threshold
                 if score >= self.save_threshold:
@@ -377,10 +436,23 @@ class QuestionMCTS:
         # Phase 1: Evaluate current node
         print(f"    [Simulate-Phase1] 评估当前节点...")
         try:
-            verifier_output = verifier(node)
+            verifier_output = verifier(node, difficulty_range=self.difficulty_range)
+            print(f"    [Simulate-Phase1] Verifier 原始输出:")
+            print(f"{'='*60}")
+            print(verifier_output)
+            print(f"{'='*60}")
+            
+            parsed_verifier = parse_verifier_output(verifier_output)
             current_score = extract_score(verifier_output)
             if current_score is None:
                 current_score = 0.0
+            
+            print(f"    [Simulate-Phase1] Verifier 详细评价:")
+            print(f"      - 总分: {parsed_verifier['total_score']}")
+            for dim_name, score in parsed_verifier['scores'].items():
+                print(f"      - {dim_name}: {score}分")
+            if parsed_verifier['overall_evaluation']:
+                print(f"      - 总体评估: {parsed_verifier['overall_evaluation'][:100]}...")
             
             # Save if quality meets threshold
             if current_score >= self.save_threshold:
@@ -405,6 +477,12 @@ class QuestionMCTS:
                 virtual_output = generator(node, combined_skill)
                 virtual_parsed = parse_generator_output(virtual_output)
                 
+                print(f"    [Simulate-Phase2] Parser 提取结果:")
+                print(f"      - problem_statement: {repr(virtual_parsed.get('problem_statement', 'NOT FOUND'))}")
+                print(f"      - integration_rationale: {repr(virtual_parsed.get('integration_rationale', 'NOT FOUND'))}")
+                print(f"      - final_answer: {repr(virtual_parsed.get('final_answer', 'NOT FOUND'))}")
+                print(f"      - solution_path: {repr(virtual_parsed.get('solution_path', 'NOT FOUND'))}")
+                
                 # Create temporary node for verification
                 temp_node = QuestionNode(
                     question=virtual_parsed.get('problem_statement', ''),
@@ -414,10 +492,33 @@ class QuestionMCTS:
                 
                 # Verify virtual question
                 virtual_verifier_output = verifier(temp_node)
+                print(f"    [Simulate-Phase2] Verifier 原始输出:")
+                print(f"{'='*60}")
+                print(virtual_verifier_output)
+                print(f"{'='*60}")
+                
+                virtual_parsed_verifier = parse_verifier_output(virtual_verifier_output)
                 potential_score = extract_score(virtual_verifier_output)
                 if potential_score is None:
                     potential_score = 0.0
+                
+                print(f"    [Simulate-Phase2] Verifier 详细评价:")
+                print(f"      - 总分: {virtual_parsed_verifier['total_score']}")
+                for dim_name, dim_score in virtual_parsed_verifier['scores'].items():
+                    print(f"      - {dim_name}: {dim_score}分")
+                if virtual_parsed_verifier['overall_evaluation']:
+                    print(f"      - 总体评估: {virtual_parsed_verifier['overall_evaluation'][:100]}...")
                 print(f"    [Simulate-Phase2] 潜在得分: {potential_score:.2f}")
+                
+                # Save virtual question if quality meets threshold
+                if potential_score >= self.save_threshold:
+                    print(f"    [Simulate-Phase2] 虚拟节点得分达标，保存中间产物...")
+                    self.save_question(temp_node, potential_score, is_virtual=True)
+                    print(f"    [Simulate-Phase2] 虚拟节点已保存")
+                
+                # Clean up virtual node immediately (important for memory management)
+                del temp_node
+                temp_node = None
             else:
                 potential_score = current_score
                 print(f"    [Simulate-Phase2] 无剩余知识点，跳过")
@@ -430,28 +531,131 @@ class QuestionMCTS:
         print(f"  [Simulate] 完成评估，综合得分: {reward:.2f} (当前{current_score:.2f} * {self.alpha} + 潜在{potential_score:.2f} * {1-self.alpha})")
         return reward
     
-    def save_question(self, node: QuestionNode, score: float):
+    def save_question(self, node: QuestionNode, score: float, is_virtual: bool = False):
         """
-        Save a high-quality question to JSON file.
+        Save a high-quality question to JSON file and Markdown file.
         
         Args:
             node: The QuestionNode containing the question to save
             score: The quality score from verifier (>= save_threshold)
+            is_virtual: Whether this is a virtual node (default: False)
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = "terminal" if node.is_terminal() else "intermediate"
+        
+        if is_virtual:
+            prefix = "virtual"
+        elif node.is_terminal():
+            prefix = "terminal"
+        else:
+            prefix = "intermediate"
+        
         filename = f"{prefix}_{timestamp}.json"
         filepath = os.path.join(self.output_dir, filename)
         
+        # Get solution method from metadata if available
+        solution_method = node.metadata.get('solution_method', '')
+        final_answer = node.metadata.get('final_answer', '')
+        
         data = {
             "question": node.question,
+            "solution_method": solution_method,
+            "final_answer": final_answer,
             "integrated_knowledge": sorted(list(node.integrated_knowledge)),
             "quality_score": score,
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "is_virtual": is_virtual
         }
         
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        # Also save as Markdown file
+        self._save_markdown(node, score, prefix, timestamp, is_virtual)
+    
+    def _save_markdown(self, node: QuestionNode, score: float, prefix: str, timestamp: str, is_virtual: bool = False):
+        """
+        Save question as Markdown file.
+        
+        Args:
+            node: The QuestionNode containing the question to save
+            score: The quality score from verifier
+            prefix: Filename prefix (virtual/terminal/intermediate)
+            timestamp: Timestamp string
+            is_virtual: Whether this is a virtual node
+        """
+        md_filename = f"{prefix}_{timestamp}.md"
+        md_filepath = os.path.join(self.output_dir, md_filename)
+        
+        # Helper function to process LaTeX for Markdown
+        def process_latex_for_markdown(text: str) -> str:
+            """Process LaTeX text to make it compatible with Markdown preview."""
+            if not text:
+                return text
+            
+            # First, convert double backslashes to single backslashes
+            text = text.replace('\\\\', '\\')
+            
+            # Replace \[ ... \] with $$ ... $$ (display math)
+            import re
+            text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
+            
+            # Replace \( ... \) with $ ... $ (inline math)
+            text = re.sub(r'\\\((.*?)\\\)', r'$\1$', text, flags=re.DOTALL)
+            
+            # Handle standalone math environments (equation, align, etc.)
+            # Wrap environment blocks with $$
+            env_pattern = r'(\\begin\{(equation|align|align\*|gather|gather\*|multline|multline\*)\}.*?\\end\{\2\})'
+            text = re.sub(env_pattern, r'$$\1$$', text, flags=re.DOTALL)
+            
+            return text
+        
+        # Process question text
+        question_text = process_latex_for_markdown(node.question)
+        
+        # Get question type
+        question_type = getattr(node, 'question_type', '计算题')
+        
+        # Get solution method and final answer from metadata
+        solution_method = process_latex_for_markdown(node.metadata.get('solution_method', ''))
+        final_answer = process_latex_for_markdown(node.metadata.get('final_answer', ''))
+        
+        # Build markdown content
+        md_content = f"""# 高等数学综合题
+
+## 题目
+
+{question_text if question_text else "（无题目内容）"}
+
+---
+
+## 解题方法
+
+{solution_method if solution_method else "（暂无解题方法）"}
+
+---
+
+## 最终答案
+
+{final_answer if final_answer else "（暂无答案）"}
+
+---
+
+## 题目信息
+
+- **题型**: {question_type}
+- **质量评分**: {score:.1f}/8.0
+- **知识点**: {', '.join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else '无'}
+- **节点类型**: {'虚拟节点' if is_virtual else ('终端节点' if node.is_terminal() else '中间节点')}
+- **生成时间**: {timestamp}
+- **难度区间**: {node.difficulty_range[0]:.1f} - {node.difficulty_range[1]:.1f}
+
+---
+
+*由高等数学综合题生成系统自动生成*
+"""
+        
+        with open(md_filepath, 'w', encoding='utf-8') as f:
+            f.write(md_content)
     
     def backpropagate(self, node: QuestionNode, reward: float):
         """

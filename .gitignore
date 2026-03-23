@@ -1,3 +1,4 @@
 .env
-generated_questions/*.json
+generated_question/*
 __pycache__
+毕业论文写作提纲.*

@@ -27,17 +27,24 @@ def main():
     print("\n[步骤 1/3] 请选择需要综合的知识点...")
     print("[Step 1/3] Please select knowledge points to integrate...\n")
     
-    selected_knowledge = select_knowledge()
+    selection_result = select_knowledge()
     
-    if not selected_knowledge:
+    if not selection_result or not selection_result.get('knowledge_points'):
         print("未选择任何知识点，程序退出。")
         print("No knowledge points selected. Exiting.")
         return
+    
+    selected_knowledge = selection_result['knowledge_points']
+    difficulty_range = selection_result.get('difficulty_range', (0.3, 0.7))
+    question_type = selection_result.get('question_type', '计算题')
     
     print(f"\n已选择 {len(selected_knowledge)} 个知识点:")
     print(f"Selected {len(selected_knowledge)} knowledge points:")
     for i, kp in enumerate(selected_knowledge, 1):
         print(f"  {i}. {kp}")
+    
+    print(f"\n难度区间: {difficulty_range[0]:.1f} - {difficulty_range[1]:.1f}")
+    print(f"题型: {question_type}")
     
     # Step 2: Initialize MCTS Root Node
     print("\n" + "=" * 60)
@@ -50,7 +57,9 @@ def main():
         question="",  # Root has no question yet
         integrated_knowledge=set(),  # No knowledge integrated yet
         waiting_knowledge=selected_knowledge,  # All selected knowledge waiting to be added
-        parent=None
+        parent=None,
+        difficulty_range=difficulty_range,  # Pass difficulty range to root node
+        question_type=question_type  # Pass question type to root node
     )
     
     print(f"根节点创建完成")
@@ -70,12 +79,11 @@ def main():
     mcts = QuestionMCTS(
         exploration_weight=1.414,  # UCT exploration parameter (sqrt(2))
         alpha=0.5,  # Weight for current score in simulation
-        save_threshold=5.0,  # Minimum quality score to save question
-        output_dir="./generated_question"  # Directory to save generated questions
+        save_threshold=7.5,  # Minimum quality score to save question
+        output_dir="./generated_question",  # Directory to save generated questions
+        difficulty_range=difficulty_range,  # Target difficulty range
+        question_type=question_type  # Target question type
     )
-    
-    # Ensure output directory exists
-    os.makedirs("./generated_question", exist_ok=True)
     
     print("\nMCTS 配置:")
     print("MCTS Configuration:")
@@ -107,14 +115,17 @@ def main():
     print(f"  - 生成终端节点: {mcts.leaf_count}")
     print(f"  - 树深度: {max((node.depth() for node in get_all_nodes(root)), default=0)}")
     
-    # Check output files
-    output_files = [f for f in os.listdir("./generated_question") if f.endswith('.json')]
+    # Check output files in the timestamped subdirectory
+    output_files = []
+    if os.path.exists(mcts.output_dir):
+        output_files = [f for f in os.listdir(mcts.output_dir) if f.endswith('.json')]
+    
     print(f"\n已保存题目数量: {len(output_files)}")
     print(f"Saved questions: {len(output_files)}")
     
     if output_files:
-        print(f"\n保存位置: {os.path.abspath('./generated_question')}")
-        print(f"Output location: {os.path.abspath('./generated_question')}")
+        print(f"\n保存位置: {os.path.abspath(mcts.output_dir)}")
+        print(f"Output location: {os.path.abspath(mcts.output_dir)}")
         print("\n文件列表:")
         print("Files:")
         for f in sorted(output_files):

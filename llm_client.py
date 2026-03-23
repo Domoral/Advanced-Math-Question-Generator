@@ -8,6 +8,7 @@ This module provides functions to interact with DeepSeek API for:
 
 import os
 import re
+import time
 from typing import Optional, TYPE_CHECKING
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -31,7 +32,8 @@ client = OpenAI(
 MODEL_NAME = os.getenv("MODEL_NAME", "deepseek-reasoner")
 
 
-def generator(node: 'QuestionNode', new_skill: str, reference_examples: Optional[str] = None) -> str:
+def generator(node: 'QuestionNode', new_skill: str, reference_examples: Optional[str] = None, 
+              difficulty_range: Optional[tuple] = None, question_type: Optional[str] = None, max_retries: int = 3) -> str:
     """
     Generate a new math problem by integrating a new skill into the existing problem.
     
@@ -41,41 +43,127 @@ def generator(node: 'QuestionNode', new_skill: str, reference_examples: Optional
         node: The current QuestionNode containing the existing problem
         new_skill: The new knowledge point to integrate
         reference_examples: Reference examples for the new skill (optional, defaults to None)
+        difficulty_range: Target difficulty range as (min, max) tuple (optional)
+        question_type: Target question type (optional)
+        max_retries: Maximum number of retry attempts when API returns empty content (default: 3)
         
     Returns:
         The raw LLM response string (key-value format, to be parsed by caller)
     """
+    print(f"\n[DEBUG] ===== generator 函数开始 =====")
+    
     # Get existing problem and skills from node
     existing_problem = node.question if node.question else "(Empty - this is the root node)"
     existing_skills = ", ".join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else "None"
     
+    print(f"[DEBUG] node.question 内容: {repr(existing_problem)}")
+    print(f"[DEBUG] node.question 长度: {len(existing_problem)}")
+    print(f"[DEBUG] existing_skills: {existing_skills}")
+    print(f"[DEBUG] new_skill: {new_skill}")
+    print(f"[DEBUG] is_terminal: {node.is_terminal()}")
+    print(f"[DEBUG] waiting_knowledge: {node.waiting_knowledge}")
+    print(f"[DEBUG] difficulty_range: {difficulty_range}")
+    print(f"[DEBUG] question_type: {question_type}")
+    
     # Handle None reference_examples
     if reference_examples is None:
         reference_examples = "No reference examples provided. Please use your knowledge to generate an appropriate problem."
+    
+    # Handle difficulty_range and question_type
+    difficulty_str = f"{difficulty_range[0]:.1f}-{difficulty_range[1]:.1f}" if difficulty_range else "0.3-0.7"
+    qtype_str = question_type if question_type else "计算题"
     
     # Format the prompt
     prompt = prompt_templates["question_generator"].format(
         existing_problem=existing_problem,
         existing_skills=existing_skills,
         new_skill=new_skill,
-        reference_examples=reference_examples
+        reference_examples=reference_examples,
+        difficulty_range=difficulty_str,
+        question_type=qtype_str
     )
     
-    # Call DeepSeek API
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": "You are a skilled mathematics problem designer."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=8192
-    )
+    print(f"[DEBUG] Prompt 长度: {len(prompt)}")
+    print(f"[DEBUG] Prompt 前200字符: {prompt[:200]}")
     
-    return response.choices[0].message.content
+    # Retry loop
+    for retry_count in range(max_retries):
+        # Call DeepSeek API
+        try:
+            print(f"[DEBUG] 开始调用 API... (尝试 {retry_count + 1}/{max_retries})")
+            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.7, max_tokens=6000")
+            
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "You are a skilled mathematics problem designer."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=6000
+            )
+            
+            print(f"[DEBUG] API 响应对象类型: {type(response)}")
+            print(f"[DEBUG] response.choices 长度: {len(response.choices)}")
+            
+            if len(response.choices) == 0:
+                print(f"[DEBUG] 错误: response.choices 为空！")
+                print(f"[DEBUG] 完整 response 对象: {response}")
+                if retry_count < max_retries - 1:
+                    wait_time = (retry_count + 1) * 2
+                    print(f"[DEBUG] {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                return ""
+            
+            choice = response.choices[0]
+            print(f"[DEBUG] choice.finish_reason: {choice.finish_reason}")
+            print(f"[DEBUG] choice.index: {choice.index}")
+            
+            if hasattr(response, 'usage'):
+                print(f"[DEBUG] usage: {response.usage}")
+            
+            message = choice.message
+            print(f"[DEBUG] message 对象存在: {message is not None}")
+            print(f"[DEBUG] message.role: {message.role if message else 'N/A'}")
+            print(f"[DEBUG] message.content 类型: {type(message.content)}")
+            print(f"[DEBUG] message.content 值: {repr(message.content)}")
+            
+            result = message.content
+            print(f"[DEBUG] API 返回结果长度: {len(result) if result else 0}")
+            print(f"[DEBUG] API 返回结果前500字符: {result[:500] if result else 'None'}")
+            
+            if not result:
+                print(f"[DEBUG] 警告: API 返回空内容！finish_reason={choice.finish_reason}")
+                if retry_count < max_retries - 1:
+                    wait_time = (retry_count + 1) * 2
+                    print(f"[DEBUG] {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                print(f"[DEBUG] 已达到最大重试次数，返回空结果")
+            
+            print(f"[DEBUG] ===== generator 函数结束 =====\n")
+            return result or ""
+            
+        except Exception as e:
+            print(f"[DEBUG] API 调用异常: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"[DEBUG] 异常堆栈:\n{traceback.format_exc()}")
+            if retry_count < max_retries - 1:
+                wait_time = (retry_count + 1) * 2
+                print(f"[DEBUG] {wait_time}秒后重试...")
+                time.sleep(wait_time)
+                continue
+            print(f"[DEBUG] 已达到最大重试次数，返回空结果")
+            print(f"[DEBUG] ===== generator 函数结束（异常） =====\n")
+            return ""
+    
+    print(f"[DEBUG] ===== generator 函数结束 =====\n")
+    return ""
 
 
-def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None) -> str:
+def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None, 
+             difficulty_range: Optional[tuple] = None, max_retries: int = 3) -> str:
     """
     Verify and score a math problem using the verifier prompt template.
     
@@ -84,37 +172,117 @@ def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None) -> 
     Args:
         node: The QuestionNode containing the problem to verify
         reference_examples: Reference examples for difficulty comparison (optional)
+        difficulty_range: Target difficulty range as (min, max) tuple (optional)
+        max_retries: Maximum number of retry attempts when API returns empty content (default: 3)
         
     Returns:
         The raw LLM response string (containing detailed evaluation and \boxed{score})
     """
+    print(f"\n[DEBUG] ===== verifier 函数开始 =====")
+    
     # Get problem and required skills from node
     problem_statement = node.question
     required_skills = ", ".join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else "None"
+    
+    print(f"[DEBUG] node.question 内容: {repr(problem_statement)}")
+    print(f"[DEBUG] node.question 长度: {len(problem_statement)}")
+    print(f"[DEBUG] integrated_knowledge: {required_skills}")
+    print(f"[DEBUG] is_terminal: {node.is_terminal()}")
+    print(f"[DEBUG] waiting_knowledge: {node.waiting_knowledge}")
+    print(f"[DEBUG] difficulty_range: {difficulty_range}")
     
     # Handle None reference_examples
     if reference_examples is None:
         reference_examples = "No reference examples provided. Please evaluate based on your knowledge of standard difficulty levels."
     
+    # Handle difficulty_range
+    difficulty_str = f"{difficulty_range[0]:.1f}-{difficulty_range[1]:.1f}" if difficulty_range else "0.3-0.7"
+    
     # Format the prompt
     prompt = prompt_templates["question_verifier"].format(
         problem_statement=problem_statement,
         required_skills=required_skills,
-        reference_examples=reference_examples
+        reference_examples=reference_examples,
+        difficulty_range=difficulty_str
     )
     
-    # Call DeepSeek API
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": "You are a rigorous mathematics problem verifier."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3,  # Lower temperature for more consistent evaluation
-        max_tokens=8192
-    )
+    print(f"[DEBUG] Prompt 长度: {len(prompt)}")
+    print(f"[DEBUG] Prompt 前200字符: {prompt[:200]}")
     
-    return response.choices[0].message.content
+    # Retry loop
+    for retry_count in range(max_retries):
+        # Call DeepSeek API
+        try:
+            print(f"[DEBUG] 开始调用 API... (尝试 {retry_count + 1}/{max_retries})")
+            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.3, max_tokens=12000")
+            
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "You are a rigorous mathematics problem verifier."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,  # Lower temperature for more consistent evaluation
+                max_tokens=12000
+            )
+            
+            print(f"[DEBUG] API 响应对象类型: {type(response)}")
+            print(f"[DEBUG] response.choices 长度: {len(response.choices)}")
+            
+            if len(response.choices) == 0:
+                print(f"[DEBUG] 错误: response.choices 为空！")
+                print(f"[DEBUG] 完整 response 对象: {response}")
+                if retry_count < max_retries - 1:
+                    wait_time = (retry_count + 1) * 2
+                    print(f"[DEBUG] {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                return ""
+            
+            choice = response.choices[0]
+            print(f"[DEBUG] choice.finish_reason: {choice.finish_reason}")
+            print(f"[DEBUG] choice.index: {choice.index}")
+            
+            if hasattr(response, 'usage'):
+                print(f"[DEBUG] usage: {response.usage}")
+            
+            message = choice.message
+            print(f"[DEBUG] message 对象存在: {message is not None}")
+            print(f"[DEBUG] message.role: {message.role if message else 'N/A'}")
+            print(f"[DEBUG] message.content 类型: {type(message.content)}")
+            print(f"[DEBUG] message.content 值: {repr(message.content)}")
+            
+            result = message.content
+            print(f"[DEBUG] API 返回结果长度: {len(result) if result else 0}")
+            print(f"[DEBUG] API 返回结果: {repr(result)}")
+            
+            if not result:
+                print(f"[DEBUG] 警告: API 返回空内容！finish_reason={choice.finish_reason}")
+                if retry_count < max_retries - 1:
+                    wait_time = (retry_count + 1) * 2
+                    print(f"[DEBUG] {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                print(f"[DEBUG] 已达到最大重试次数，返回空结果")
+            
+            print(f"[DEBUG] ===== verifier 函数结束 =====\n")
+            return result or ""
+            
+        except Exception as e:
+            print(f"[DEBUG] API 调用异常: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"[DEBUG] 异常堆栈:\n{traceback.format_exc()}")
+            if retry_count < max_retries - 1:
+                wait_time = (retry_count + 1) * 2
+                print(f"[DEBUG] {wait_time}秒后重试...")
+                time.sleep(wait_time)
+                continue
+            print(f"[DEBUG] 已达到最大重试次数，返回空结果")
+            print(f"[DEBUG] ===== verifier 函数结束（异常） =====\n")
+            return ""
+    
+    print(f"[DEBUG] ===== verifier 函数结束 =====\n")
+    return ""
 
 
 def extract_score(verifier_output: str) -> Optional[float]:
@@ -189,7 +357,13 @@ def parse_generator_output(output: str) -> dict:
         if match:
             result['problem_statement'] = match.group(1).strip()
     
-    # 预期解题路径 (Expected Solution Path) -> solution_path
+    # 解题方法 (Solution Method) -> solution_method
+    if 'solution_method' not in result:
+        match = re.search(r'###\s*解题方法\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+        if match:
+            result['solution_method'] = match.group(1).strip()
+    
+    # 预期解题路径 (Expected Solution Path) -> solution_path (for backward compatibility)
     if 'solution_path' not in result:
         match = re.search(r'###\s*预期解题路径\s*\n(.*?)(?=###|$)', output, re.DOTALL)
         if match:
@@ -206,5 +380,76 @@ def parse_generator_output(output: str) -> dict:
         match = re.search(r'###\s*最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
         if match:
             result['final_answer'] = match.group(1).strip()
+    
+    return result
+
+
+def parse_verifier_output(output: str) -> dict:
+    """
+    Parse the verifier output to extract detailed evaluation and scores.
+    
+    Args:
+        output: The raw output from verifier function
+        
+    Returns:
+        Dictionary containing parsed evaluation details:
+        - solution_attempt: The verifier's attempt to solve the problem
+        - final_answer: The answer the verifier obtained
+        - scores: Dict of individual dimension scores (1-6)
+        - total_score: The total score from \boxed{}
+        - analyses: Dict of analysis text for each dimension
+        - overall_evaluation: The overall evaluation summary
+    """
+    result = {
+        'solution_attempt': '',
+        'final_answer': '',
+        'scores': {},
+        'analyses': {},
+        'total_score': None,
+        'overall_evaluation': ''
+    }
+    
+    # Extract solution attempt
+    match = re.search(r'###\s*解题尝试\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['solution_attempt'] = match.group(1).strip()
+    
+    # Extract final answer
+    match = re.search(r'###\s*获得的最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['final_answer'] = match.group(1).strip()
+    
+    # Extract detailed evaluation scores and analyses
+    dimensions = [
+        ('1', '单一答案要求'),
+        ('2', '精确答案要求'),
+        ('3', '双技能融合'),
+        ('4', '清晰性和完整性'),
+        ('5', '计算可行性'),
+        ('6', '语法和表达'),
+        ('7', '小问数量限制'),
+        ('8', '难度区间符合度')
+    ]
+    
+    for num, name in dimensions:
+        # Extract analysis
+        match = re.search(rf'\*\*{num}\.\s*{name}\*\*：\s*(.*?)\s*得分：', output, re.DOTALL)
+        if match:
+            result['analyses'][name] = match.group(1).strip()
+        
+        # Extract score
+        match = re.search(rf'\*\*{num}\.\s*{name}\*\*：.*?得分：\s*(\d+(?:\.\d+)?)\s*分', output)
+        if match:
+            result['scores'][name] = float(match.group(1))
+    
+    # Extract overall evaluation
+    match = re.search(r'###\s*总体评估\s*\n(.*?)(?=---|$)', output, re.DOTALL)
+    if match:
+        result['overall_evaluation'] = match.group(1).strip()
+    
+    # Extract total score from \boxed{}
+    match = re.search(r'\\boxed\{(\d+(?:\.\d+)?)\}', output)
+    if match:
+        result['total_score'] = float(match.group(1))
     
     return result
