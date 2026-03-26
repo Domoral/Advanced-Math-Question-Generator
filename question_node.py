@@ -5,8 +5,8 @@ This module defines the QuestionNode class used in the MCTS tree for generating
 integrated mathematics problems by progressively combining knowledge points.
 """
 
-from typing import List, Optional, Set
-from llm_client import generator, verifier, extract_score, parse_generator_output, parse_verifier_output
+from typing import List, Optional, Set, Dict, Any
+from llm_client import generator, verifier, extract_score, parse_generator_output, parse_verifier_output, optimizer
 import math
 import json
 import os
@@ -80,6 +80,18 @@ class QuestionNode:
             'merge_strategy': None,  # How this node was generated from parent
             'quality_details': None,  # Detailed evaluation from verifier
         }
+        
+        # Reward history and optimization tracking
+        self.reward_history: List[float] = []  # History of all rewards received
+        self.last_reward: Optional[float] = None  # Last reward received (combined reward from simulate)
+        self.this_score: Optional[float] = None  # Current node's own quality score (phase 1 score)
+        self.deduction_points: Dict[str, float] = {}  # Dimension -> deduction score mapping
+        self.needs_optimization: bool = False  # Flag indicating if node needs optimization
+        self.optimization_attempts: int = 0  # Number of optimization attempts made
+        self.max_optimization_attempts: int = 3  # Maximum optimization attempts allowed
+        
+        # Node type flag
+        self.is_root: bool = (parent is None)  # True if this is the root node
     
     def is_terminal(self) -> bool:
         """
@@ -160,15 +172,50 @@ class QuestionNode:
             return 0.0
         return self.Q / self.N
     
-    def update(self, reward: float):
+    def update(self, reward: float, this_score: Optional[float] = None, deduction_points: Optional[Dict[str, float]] = None):
         """
         Update node statistics after a rollout.
         
         Args:
-            reward: The quality score obtained from simulation
+            reward: The combined quality score obtained from simulation (for backpropagation)
+            this_score: The current node's own quality score (phase 1 score, for optimization decision)
+            deduction_points: Dictionary mapping dimension names to deduction scores
         """
         self.N += 1
         self.Q += reward
+        self.reward_history.append(reward)
+        self.last_reward = reward
+        if this_score is not None:
+            self.this_score = this_score
+        if deduction_points:
+            self.deduction_points = deduction_points.copy()
+        
+    def should_optimize(self, threshold: float) -> bool:
+        """
+        Check if this node should be optimized instead of expanded.
+        
+        A node should be optimized if:
+        1. It is NOT the root node (root nodes should always use generator)
+        2. It has a this_score (own quality score) below the threshold
+        3. It hasn't exceeded max optimization attempts
+        
+        Args:
+            threshold: The quality threshold below which optimization is triggered
+            
+        Returns:
+            True if node should be optimized, False otherwise
+        """
+        # Root node should never be optimized - always use generator for fusion
+        if self.is_root:
+            return False
+        # Nodes without this_score should use generator
+        if self.this_score is None:
+            return False
+        if self.this_score >= threshold:
+            return False
+        if self.optimization_attempts >= self.max_optimization_attempts:
+            return False
+        return True
     
     def add_child(self, child: 'QuestionNode'):
         """
@@ -256,7 +303,8 @@ class QuestionMCTS:
         save_threshold: float = 7.5,
         output_dir: str = "./generated_question",
         difficulty_range: tuple = (0.3, 0.7),
-        question_type: str = "计算题"
+        question_type: str = "计算题",
+        need_optimize_threshold: float = 6.0  # Threshold below which nodes need optimization
     ):
         """
         Initialize the MCTS searcher.
@@ -268,6 +316,7 @@ class QuestionMCTS:
             output_dir: Base directory to save generated questions
             difficulty_range: Target difficulty range (min, max)
             question_type: Target question type
+            need_optimize_threshold: Quality threshold below which nodes trigger optimization
         """
         self.exploration_weight = exploration_weight
         self.alpha = alpha
@@ -275,6 +324,7 @@ class QuestionMCTS:
         self.leaf_count = 0  # Count of terminal nodes generated
         self.difficulty_range = difficulty_range
         self.question_type = question_type
+        self.need_optimize_threshold = need_optimize_threshold
         
         # Create timestamped subdirectory for this run
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -286,6 +336,7 @@ class QuestionMCTS:
         print(f"[INFO] 输出目录: {self.output_dir}")
         print(f"[INFO] 难度区间: {difficulty_range[0]:.1f} - {difficulty_range[1]:.1f}")
         print(f"[INFO] 题型: {question_type}")
+        print(f"[INFO] 优化阈值: {need_optimize_threshold} (低于此分数将触发优化)")
     
     def select(self, root: QuestionNode) -> QuestionNode:
         """
@@ -311,12 +362,113 @@ class QuestionMCTS:
             node = max(node.children, key=lambda c: c.uct_score(self.exploration_weight))
             depth += 1
         
-        print(f"  [Select] 完成选择节点 (深度: {depth}, 已综合: {len(node.integrated_knowledge)} 个知识点)")
+        this_score_str = f"{node.this_score:.2f}" if node.this_score is not None else "N/A"
+        last_reward_str = f"{node.last_reward:.2f}" if node.last_reward is not None else "N/A"
+        print(f"  [Select] 完成选择节点 (深度: {depth}, 已综合: {len(node.integrated_knowledge)} 个知识点, 自身得分: {this_score_str}, 综合得分: {last_reward_str})")
         return node
-    
+
     def expand(self, node: QuestionNode) -> QuestionNode:
         """
-        Expand a node by generating a new child.
+        Expand a node by either optimizing it or generating a new child.
+
+        Decision logic:
+        - If node has low this_score (below need_optimize_threshold) and hasn't exceeded
+          max optimization attempts: call optimizer to create an optimized child
+        - Otherwise: use generator to create a new integrated child with next skill
+
+        Args:
+            node: The node to expand
+
+        Returns:
+            The newly generated child node (optimized or integrated)
+        """
+        if node.is_terminal():
+            raise RuntimeError("Cannot expand terminal node")
+
+        # Check if node needs optimization instead of further fusion
+        if node.should_optimize(self.need_optimize_threshold):
+            print(f"  [Expand] 节点自身得分 {node.this_score:.2f} 低于阈值 {self.need_optimize_threshold}，执行优化而非融合...")
+            return self._expand_with_optimizer(node)
+        else:
+            # Get next knowledge point for normal fusion
+            new_skill = node.waiting_knowledge[0]
+            score_info = f"自身得分 {node.this_score:.2f}" if node.this_score else "无自身得分"
+            print(f"  [Expand] {score_info}，继续融合知识点: {new_skill}...")
+            return self._expand_with_generator(node)
+
+    def _expand_with_optimizer(self, node: QuestionNode) -> QuestionNode:
+        """
+        Expand a node by creating an optimized version as a child.
+        
+        Args:
+            node: The parent node to optimize
+            
+        Returns:
+            The optimized child node
+        """
+        print(f"  [Expand-Optimize] 开始优化节点 (第 {node.optimization_attempts + 1}/{node.max_optimization_attempts} 次尝试)...")
+        
+        try:
+            # Call optimizer with deduction points
+            from llm_client import optimizer as optimizer_func, parse_optimizer_output
+            
+            raw_output = optimizer_func(node, node.deduction_points)
+            
+            if not raw_output:
+                print(f"  [Expand-Optimize] 优化失败: API 返回空结果，回退到普通融合")
+                node.optimization_attempts += 1
+                return self._expand_with_generator(node)
+            
+            print(f"  [Expand-Optimize] Optimizer 原始输出:")
+            print(f"    - 长度: {len(raw_output)}")
+            print(f"    - 前500字符: {raw_output[:500]}")
+            
+            parsed = parse_optimizer_output(raw_output)
+            optimized_problem = parsed.get('optimized_problem', '')
+            
+            if not optimized_problem:
+                print(f"  [Expand-Optimize] 优化失败: 无法提取优化后的题目，回退到普通融合")
+                node.optimization_attempts += 1
+                return self._expand_with_generator(node)
+            
+            # Create child node with optimized problem
+            # The child keeps the same knowledge structure as parent (optimization doesn't add new skills)
+            child = QuestionNode(
+                question=optimized_problem,
+                integrated_knowledge=node.integrated_knowledge.copy(),  # Same skills as parent
+                waiting_knowledge=node.waiting_knowledge.copy(),  # Same waiting list as parent
+                parent=node
+            )
+            
+            # Copy parent's properties
+            child.difficulty_range = node.difficulty_range
+            child.question_type = node.question_type
+            
+            # Update metadata
+            child.metadata['generation_step'] = node.depth() + 1
+            child.metadata['is_optimized_version'] = True
+            child.metadata['parent_node_reward'] = node.last_reward
+            child.metadata['optimization_analysis'] = parsed.get('problem_analysis', '')
+            child.metadata['optimization_strategy'] = parsed.get('optimization_strategy', '')
+            child.metadata['improvement_notes'] = parsed.get('improvement_notes', '')
+            
+            node.add_child(child)
+            node.optimization_attempts += 1
+            
+            print(f"  [Expand-Optimize] 优化子节点创建完成 (子节点数: {len(node.children)})")
+            print(f"    - 问题分析: {parsed.get('problem_analysis', 'N/A')[:80]}...")
+            print(f"    - 改进说明: {parsed.get('improvement_notes', 'N/A')[:80]}...")
+            
+            return child
+            
+        except Exception as e:
+            print(f"  [Expand-Optimize] 优化失败: {str(e)}，回退到普通融合")
+            node.optimization_attempts += 1
+            return self._expand_with_generator(node)
+    
+    def _expand_with_generator(self, node: QuestionNode) -> QuestionNode:
+        """
+        Expand a node by generating a new child with the next skill.
         
         Pop the first knowledge point from waiting_knowledge,
         use generator to create a new integrated problem.
@@ -327,14 +479,11 @@ class QuestionMCTS:
         Returns:
             The newly generated child node
         """
-        if node.is_terminal():
-            raise RuntimeError("Cannot expand terminal node")
-        
         # Get next knowledge point
         new_skill = node.waiting_knowledge[0]
         remaining = node.waiting_knowledge[1:]
         
-        print(f"  [Expand] 开始扩展节点，添加知识点: {new_skill}...")
+        print(f"  [Expand-Generator] 开始扩展节点，添加知识点: {new_skill}...")
         
         # Generate new problem using LLM
         try:
@@ -420,18 +569,22 @@ class QuestionMCTS:
                 if parsed_verifier['overall_evaluation']:
                     print(f"      - 总体评估: {parsed_verifier['overall_evaluation'][:100]}...")
                 
+                # Save deduction points and this_score for potential optimization
+                node.deduction_points = parsed_verifier.get('scores', {})
+                node.this_score = score  # Save the node's own quality score
+
                 # Save if quality meets threshold
                 if score >= self.save_threshold:
                     self.save_question(node, score)
                     print(f"  [Simulate] 完成评估，得分: {score:.2f} (已保存)")
                 else:
                     print(f"  [Simulate] 完成评估，得分: {score:.2f}")
-                
+
                 return score
             except Exception as e:
                 print(f"  [Simulate] 评估失败: {str(e)}")
                 return 0.0
-        
+
         # Case B: Non-terminal node - two-phase evaluation
         # Phase 1: Evaluate current node
         print(f"    [Simulate-Phase1] 评估当前节点...")
@@ -441,18 +594,22 @@ class QuestionMCTS:
             print(f"{'='*60}")
             print(verifier_output)
             print(f"{'='*60}")
-            
+
             parsed_verifier = parse_verifier_output(verifier_output)
             current_score = extract_score(verifier_output)
             if current_score is None:
                 current_score = 0.0
-            
+
             print(f"    [Simulate-Phase1] Verifier 详细评价:")
             print(f"      - 总分: {parsed_verifier['total_score']}")
-            for dim_name, score in parsed_verifier['scores'].items():
-                print(f"      - {dim_name}: {score}分")
+            for dim_name, score_val in parsed_verifier['scores'].items():
+                print(f"      - {dim_name}: {score_val}分")
             if parsed_verifier['overall_evaluation']:
                 print(f"      - 总体评估: {parsed_verifier['overall_evaluation'][:100]}...")
+
+            # Save deduction points and this_score for potential optimization
+            node.deduction_points = parsed_verifier.get('scores', {})
+            node.this_score = current_score  # Save the node's own quality score
             
             # Save if quality meets threshold
             if current_score >= self.save_threshold:
@@ -670,8 +827,16 @@ class QuestionMCTS:
         print(f"  [Backpropagate] 开始回溯传播 (奖励: {reward:.2f})...")
         current = node
         depth = 0
+        # Pass this_score and deduction points from the simulated node to its ancestors
+        this_score = node.this_score if hasattr(node, 'this_score') else None
+        deduction_points = node.deduction_points if hasattr(node, 'deduction_points') else {}
         while current is not None:
-            current.update(reward)
+            # Only pass this_score and deduction_points to the simulated node itself
+            current.update(
+                reward,
+                this_score if current == node else None,
+                deduction_points if current == node else None
+            )
             depth += 1
             current = current.parent
         print(f"  [Backpropagate] 完成回溯传播 (更新 {depth} 个节点)")

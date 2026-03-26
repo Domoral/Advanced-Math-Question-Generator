@@ -82,15 +82,17 @@ def main():
         save_threshold=7.5,  # Minimum quality score to save question
         output_dir="./generated_question",  # Directory to save generated questions
         difficulty_range=difficulty_range,  # Target difficulty range
-        question_type=question_type  # Target question type
+        question_type=question_type,  # Target question type
+        need_optimize_threshold=6.0  # Threshold below which nodes trigger optimization
     )
-    
+
     print("\nMCTS 配置:")
     print("MCTS Configuration:")
     print(f"  - 探索权重 (Exploration weight): {mcts.exploration_weight}")
     print(f"  - 模拟权重 (Alpha): {mcts.alpha}")
     print(f"  - 保存阈值 (Save threshold): {mcts.save_threshold}")
     print(f"  - 输出目录 (Output directory): {mcts.output_dir}")
+    print(f"  - 优化阈值 (Optimize threshold): {mcts.need_optimize_threshold}")
     
     print("\n开始搜索循环 (Select -> Expand -> Simulate -> Backpropagate)...")
     print("Starting search loop...\n")

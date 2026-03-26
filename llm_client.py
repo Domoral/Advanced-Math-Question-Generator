@@ -410,12 +410,12 @@ def parse_verifier_output(output: str) -> dict:
     }
     
     # Extract solution attempt
-    match = re.search(r'###\s*解题尝试\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    match = re.search(r'###\s*解题方法\s*\n(.*?)(?=###|$)', output, re.DOTALL)
     if match:
         result['solution_attempt'] = match.group(1).strip()
     
     # Extract final answer
-    match = re.search(r'###\s*获得的最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    match = re.search(r'###\s*最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
     if match:
         result['final_answer'] = match.group(1).strip()
     
@@ -451,5 +451,163 @@ def parse_verifier_output(output: str) -> dict:
     match = re.search(r'\\boxed\{(\d+(?:\.\d+)?)\}', output)
     if match:
         result['total_score'] = float(match.group(1))
+    
+    return result
+
+
+def optimizer(node: 'QuestionNode', deduction_points: dict, max_retries: int = 3) -> str:
+    """
+    Optimize an existing math problem based on verifier feedback.
+    
+    Uses the question_optimizer prompt template and calls DeepSeek API.
+    
+    Args:
+        node: The QuestionNode containing the problem to optimize
+        deduction_points: Dictionary mapping dimension names to deduction scores
+        max_retries: Maximum number of retry attempts when API returns empty content (default: 3)
+        
+    Returns:
+        The raw LLM response string containing the optimized problem
+    """
+    print(f"\n[DEBUG] ===== optimizer 函数开始 =====")
+    
+    # Get problem and required skills from node
+    existing_problem = node.question
+    existing_skills = ", ".join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else "None"
+    last_reward = node.last_reward if node.last_reward else 0.0
+    
+    print(f"[DEBUG] node.question 内容: {repr(existing_problem)}")
+    print(f"[DEBUG] integrated_knowledge: {existing_skills}")
+    print(f"[DEBUG] last_reward: {last_reward}")
+    print(f"[DEBUG] deduction_points: {deduction_points}")
+    
+    # Format deduction details
+    deduction_details = "\n".join([
+        f"- {dim}: 扣了 {1.0 - score:.1f} 分 (得分 {score}/1.0)"
+        for dim, score in deduction_points.items()
+        if score < 1.0
+    ]) if deduction_points else "无明显扣分点"
+    
+    # Get difficulty range and question type from node
+    difficulty_range = getattr(node, 'difficulty_range', (0.3, 0.7))
+    question_type = getattr(node, 'question_type', '计算题')
+    difficulty_str = f"{difficulty_range[0]:.1f}-{difficulty_range[1]:.1f}"
+    
+    print(f"[DEBUG] difficulty_range: {difficulty_str}")
+    print(f"[DEBUG] question_type: {question_type}")
+    
+    # Format the prompt
+    prompt = prompt_templates["question_optimizer"].format(
+        existing_problem=existing_problem,
+        existing_skills=existing_skills,
+        last_reward=f"{last_reward:.1f}",
+        deduction_details=deduction_details,
+        difficulty_range=difficulty_str,
+        question_type=question_type
+    )
+    
+    print(f"[DEBUG] Prompt 长度: {len(prompt)}")
+    print(f"[DEBUG] Prompt 前200字符: {prompt[:200]}")
+    
+    # Retry loop
+    for retry_count in range(max_retries):
+        # Call DeepSeek API
+        try:
+            print(f"[DEBUG] 开始调用 API... (尝试 {retry_count + 1}/{max_retries})")
+            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.7, max_tokens=6000")
+            
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "You are a skilled mathematics problem optimization expert."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=6000
+            )
+            
+            print(f"[DEBUG] API 响应对象类型: {type(response)}")
+            print(f"[DEBUG] response.choices 长度: {len(response.choices)}")
+            
+            if len(response.choices) == 0:
+                print(f"[DEBUG] 错误: response.choices 为空！")
+                if retry_count < max_retries - 1:
+                    wait_time = (retry_count + 1) * 2
+                    print(f"[DEBUG] {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                return ""
+            
+            choice = response.choices[0]
+            print(f"[DEBUG] choice.finish_reason: {choice.finish_reason}")
+            
+            message = choice.message
+            result = message.content
+            
+            print(f"[DEBUG] API 返回结果长度: {len(result) if result else 0}")
+            print(f"[DEBUG] API 返回结果前500字符: {result[:500] if result else 'None'}")
+            
+            if not result:
+                print(f"[DEBUG] 警告: API 返回空内容！")
+                if retry_count < max_retries - 1:
+                    wait_time = (retry_count + 1) * 2
+                    print(f"[DEBUG] {wait_time}秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+            
+            print(f"[DEBUG] ===== optimizer 函数结束 =====\n")
+            return result or ""
+            
+        except Exception as e:
+            print(f"[DEBUG] API 调用异常: {type(e).__name__}: {str(e)}")
+            import traceback
+            print(f"[DEBUG] 异常堆栈:\n{traceback.format_exc()}")
+            if retry_count < max_retries - 1:
+                wait_time = (retry_count + 1) * 2
+                print(f"[DEBUG] {wait_time}秒后重试...")
+                time.sleep(wait_time)
+                continue
+            print(f"[DEBUG] ===== optimizer 函数结束（异常） =====\n")
+            return ""
+    
+    print(f"[DEBUG] ===== optimizer 函数结束 =====\n")
+    return ""
+
+
+def parse_optimizer_output(output: str) -> dict:
+    """
+    Parse the output from optimizer function.
+    
+    Args:
+        output: The raw output from optimizer function
+        
+    Returns:
+        Dictionary containing parsed fields:
+        - problem_analysis: Analysis of the original problem's issues
+        - optimization_strategy: Strategy for optimization
+        - optimized_problem: The optimized problem statement
+        - improvement_notes: Notes on improvements made
+    """
+    result = {}
+    
+    # Extract problem analysis
+    match = re.search(r'###\s*问题分析\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['problem_analysis'] = match.group(1).strip()
+    
+    # Extract optimization strategy
+    match = re.search(r'###\s*优化策略\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['optimization_strategy'] = match.group(1).strip()
+    
+    # Extract optimized problem
+    match = re.search(r'###\s*优化后的题目\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['optimized_problem'] = match.group(1).strip()
+    
+    # Extract improvement notes
+    match = re.search(r'###\s*改进说明\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['improvement_notes'] = match.group(1).strip()
     
     return result
