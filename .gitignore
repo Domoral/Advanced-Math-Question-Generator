@@ -1,6 +1,4 @@
 .env
 generated_question/*
 __pycache__
-frontend/
-package-lock.json
 毕业论文写作提纲.*
