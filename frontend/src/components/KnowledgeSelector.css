@@ -55,6 +55,19 @@
   color: white;
 }
 
+.generation-mode-section {
+  margin: 20px 0;
+  padding: 15px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+}
+
+.mode-display {
+  margin-top: 10px;
+  color: #666;
+  font-size: 14px;
+}
+
 /* 知识点网格 */
 .knowledge-grid {
   display: grid;

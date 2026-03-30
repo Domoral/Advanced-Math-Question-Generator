@@ -38,6 +38,15 @@ generated/questions/
 .DS_Store
 Thumbs.db
 
+# SSL Certificates - NEVER commit private keys!
+deploy/nginx/ssl/
+*.crt
+*.key
+*.pem
+
 # Project specific
 毕业论文写作提纲.*
 *.log
+
+backend/data
+backend/models_cache

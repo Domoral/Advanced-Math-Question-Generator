@@ -56,6 +56,7 @@ export interface SelectionResult {
   knowledge_points: string[];
   difficulty_range: [number, number];
   question_type: string;
+  use_rag: boolean;
 }
 
 interface KnowledgeSelectorProps {
@@ -69,6 +70,7 @@ const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCanc
   const [minDifficulty, setMinDifficulty] = useState<number>(0.3);
   const [maxDifficulty, setMaxDifficulty] = useState<number>(0.7);
   const [questionType, setQuestionType] = useState<string>('计算题');
+  const [useRag, setUseRag] = useState<boolean>(true);
 
   // 构建反向依赖映射（谁依赖我）
   const dependents = useMemo(() => {
@@ -151,6 +153,7 @@ const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCanc
       knowledge_points: sortedSelected,
       difficulty_range: [minDifficulty, maxDifficulty],
       question_type: questionType,
+      use_rag: useRag,
     });
   };
 
@@ -277,6 +280,32 @@ const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCanc
           ))}
         </div>
         <div className="type-display">当前题型: {questionType}</div>
+      </div>
+
+      {/* 生成模式选择区域 */}
+      <div className="generation-mode-section">
+        <h3>生成模式</h3>
+        <div className="radio-group">
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="generationMode"
+              checked={useRag}
+              onChange={() => setUseRag(true)}
+            />
+            <span>RAG 增强（基于知识库检索）</span>
+          </label>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="generationMode"
+              checked={!useRag}
+              onChange={() => setUseRag(false)}
+            />
+            <span>Pure LLM（纯大模型生成）</span>
+          </label>
+        </div>
+        <div className="mode-display">当前模式: {useRag ? 'RAG 增强' : 'Pure LLM'}</div>
       </div>
 
       {/* 按钮区域 */}
