@@ -1,10 +1,26 @@
 # Advanced Math Question Generator - Python Dependencies
 
+# FastAPI Web Framework
+fastapi>=0.100.0
+uvicorn>=0.23.0
+
+# Data Validation
+pydantic>=2.0.0
+
 # LLM API Client
 openai>=1.0.0
 
 # Environment variable management
 python-dotenv>=1.0.0
+
+# Vector Database for RAG
+chromadb>=0.4.0
+
+# Sentence Transformers for embeddings
+sentence_transformers>=2.2.0
+
+# Progress bar
+tqdm>=4.65.0
 
 # GUI (optional, for knowledge_selector.py)
 # tkinter is included with standard Python on Windows

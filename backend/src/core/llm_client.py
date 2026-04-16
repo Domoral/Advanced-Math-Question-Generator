@@ -380,7 +380,12 @@ def parse_generator_output(output: str) -> dict:
         match = re.search(r'###\s*最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
         if match:
             result['final_answer'] = match.group(1).strip()
-    
+
+    # 解题步骤 (Solving Steps) -> solving_steps
+    match = re.search(r'###\s*解题步骤\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    if match:
+        result['solving_steps'] = match.group(1).strip()
+
     return result
 
 
@@ -428,30 +433,36 @@ def parse_verifier_output(output: str) -> dict:
         ('5', '计算可行性'),
         ('6', '语法和表达'),
         ('7', '小问数量限制'),
-        ('8', '难度区间符合度')
+        ('8', '难度区间符合度'),
+        ('9', '按解题步骤能否正确解答')
     ]
-    
+
     for num, name in dimensions:
         # Extract analysis
         match = re.search(rf'\*\*{num}\.\s*{name}\*\*：\s*(.*?)\s*得分：', output, re.DOTALL)
         if match:
             result['analyses'][name] = match.group(1).strip()
-        
+
         # Extract score
         match = re.search(rf'\*\*{num}\.\s*{name}\*\*：.*?得分：\s*(\d+(?:\.\d+)?)\s*分', output)
         if match:
             result['scores'][name] = float(match.group(1))
-    
+
+    # Extract deduction details
+    match = re.search(r'###\s*扣分点详情\s*\n(.*?)(?=---|\*\*最终得分框|$)', output, re.DOTALL)
+    if match:
+        result['deduction_details'] = match.group(1).strip()
+
     # Extract overall evaluation
     match = re.search(r'###\s*总体评估\s*\n(.*?)(?=---|$)', output, re.DOTALL)
     if match:
         result['overall_evaluation'] = match.group(1).strip()
-    
+
     # Extract total score from \boxed{}
     match = re.search(r'\\boxed\{(\d+(?:\.\d+)?)\}', output)
     if match:
         result['total_score'] = float(match.group(1))
-    
+
     return result
 
 
@@ -492,15 +503,18 @@ def optimizer(node: 'QuestionNode', deduction_points: dict, max_retries: int = 3
     difficulty_range = getattr(node, 'difficulty_range', (0.3, 0.7))
     question_type = getattr(node, 'question_type', '计算题')
     difficulty_str = f"{difficulty_range[0]:.1f}-{difficulty_range[1]:.1f}"
-    
+
+    solving_steps = getattr(node, 'solving_steps', None) or "无解题步骤信息"
+
     print(f"[DEBUG] difficulty_range: {difficulty_str}")
     print(f"[DEBUG] question_type: {question_type}")
-    
+
     # Format the prompt
     prompt = prompt_templates["question_optimizer"].format(
         existing_problem=existing_problem,
         existing_skills=existing_skills,
         last_reward=f"{last_reward:.1f}",
+        solving_steps=solving_steps,
         deduction_details=deduction_details,
         difficulty_range=difficulty_str,
         question_type=question_type

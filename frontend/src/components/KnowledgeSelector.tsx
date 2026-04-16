@@ -1,53 +1,36 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import './KnowledgeSelector.css';
 
-// 知识点拓扑结构（前置依赖关系）
-const DEFAULT_KNOWLEDGE_TOPOLOGY: Record<string, string[]> = {
-  // 极限与连续
-  '数列极限': [],
-  '函数极限': ['数列极限'],
-  '无穷小比较': ['函数极限'],
-  '连续性': ['函数极限'],
+type SubCategory = Record<string, string[]>;
 
-  // 微分学
-  '导数定义': ['函数极限'],
-  '求导法则': ['导数定义'],
-  '微分中值定理': ['导数定义', '连续性'],
-  '泰勒展开': ['微分中值定理'],
-  '函数性态分析': ['导数定义'],
-  '洛必达法则': ['导数定义'],
-
-  // 积分学
-  '不定积分': ['求导法则'],
-  '定积分': ['不定积分', '连续性'],
-  '变限积分': ['定积分'],
-  '反常积分': ['定积分'],
-  '积分应用': ['定积分'],
-
-  // 级数
-  '数项级数': ['数列极限'],
-  '幂级数': ['数项级数', '泰勒展开'],
-  '傅里叶级数': ['定积分'],
-
-  // 微分方程
-  '一阶方程': ['不定积分'],
-  '高阶线性方程': ['一阶方程', '导数定义'],
-
-  // 多元函数
-  '偏导数': ['导数定义'],
-  '重积分': ['定积分', '偏导数'],
-  '曲线积分': ['定积分', '偏导数'],
-  '曲面积分': ['重积分', '曲线积分'],
-};
-
-// 知识点分类
-const CATEGORIES: Record<string, string[]> = {
-  '极限与连续': ['数列极限', '函数极限', '无穷小比较', '连续性'],
-  '微分学': ['导数定义', '求导法则', '微分中值定理', '泰勒展开', '函数性态分析', '洛必达法则'],
-  '积分学': ['不定积分', '定积分', '变限积分', '反常积分', '积分应用'],
-  '级数': ['数项级数', '幂级数', '傅里叶级数'],
-  '微分方程': ['一阶方程', '高阶线性方程'],
-  '多元函数': ['偏导数', '重积分', '曲线积分', '曲面积分'],
+const CATEGORIES: Record<string, SubCategory> = {
+  '高等数学': {
+    '极限': ['极限定义', '洛必达法则', '泰勒公式', '麦克劳林公式', '等价无穷小替换', '夹逼准则', '单调有界准则', '海涅定理'],
+    '微分中值定理': ['费马引理', '罗尔定理', '拉格朗日中值定理', '柯西中值定理', '泰勒中值定理'],
+    '导数与微分': ['导数定义求导', '隐函数求导', '参数方程求导', '曲率公式'],
+    '不定积分': ['牛顿-莱布尼茨公式', '换元积分法', '分部积分法', '有理函数积分', '点火公式', '区间再现公式', '积分中值定理'],
+    '定积分应用': ['定积分几何应用', '旋转体体积公式', '弧长公式'],
+    '常微分方程': ['一阶线性微分方程', '可分离变量微分方程', '齐次微分方程', '二阶常系数齐次微分方程', '二阶常系数非齐次微分方程', '欧拉方程'],
+    '级数': ['比较判别法', '比值判别法', '根值判别法', '莱布尼茨判别法', '绝对收敛与条件收敛', '幂级数收敛半径', '函数展开为幂级数', '傅里叶级数'],
+    '多元积分': ['二重积分极坐标变换', '三重积分柱坐标变换', '三重积分球坐标变换', '格林公式', '高斯公式', '斯托克斯公式', '曲线积分与路径无关条件'],
+    '广义积分与特殊函数': ['柯西-施瓦茨不等式', '高斯积分', '伽马函数', '贝塔函数'],
+  },
+  '线性代数': {
+    '行列式与矩阵': ['行列式展开定理', '克拉默法则', '矩阵求逆公式', '矩阵的秩的性质', '分块矩阵运算'],
+    '向量与空间': ['施密特正交化', '向量组线性相关性判定', '向量组秩的判定'],
+    '线性方程组': ['齐次方程组基础解系', '非齐次方程组解的结构'],
+    '特征值与特征向量': ['特征值特征向量定义', '相似矩阵性质', '实对称矩阵性质'],
+    '二次型': ['合同变换', '正定矩阵判定'],
+    '矩阵分解与坐标变换': ['正交矩阵性质', '基变换与坐标变换'],
+  },
+  '概率论与数理统计': {
+    '概率基础': ['古典概型', '几何概型', '条件概率公式', '乘法公式', '全概率公式', '贝叶斯公式'],
+    '随机变量': ['分布函数法求密度', '卷积公式', '常见分布性质'],
+    '数字特征': ['方差计算公式', '协方差计算公式', '相关系数公式'],
+    '极限定理': ['切比雪夫不等式', '大数定律', '独立同分布中心极限定理'],
+    '参数估计': ['矩估计法', '最大似然估计法', '无偏性有效性一致性', '区间估计'],
+    '假设检验': ['假设检验步骤', '单正态总体均值方差检验', '双正态总体均值差方差比检验'],
+  },
 };
 
 const QUESTION_TYPES = ['单选题', '多选题', '填空题', '计算题', '证明题', '应用题'];
@@ -67,68 +50,59 @@ interface KnowledgeSelectorProps {
 const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCancel }) => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<string>(Object.keys(CATEGORIES)[0]);
+  const [activeSubCategory, setActiveSubCategory] = useState<string>('');
   const [minDifficulty, setMinDifficulty] = useState<number>(0.3);
   const [maxDifficulty, setMaxDifficulty] = useState<number>(0.7);
   const [questionType, setQuestionType] = useState<string>('计算题');
   const [useRag, setUseRag] = useState<boolean>(true);
 
-  // 构建反向依赖映射（谁依赖我）
-  const dependents = useMemo(() => {
-    const deps: Record<string, Set<string>> = {};
-    Object.keys(DEFAULT_KNOWLEDGE_TOPOLOGY).forEach((k) => {
-      deps[k] = new Set();
-    });
-    Object.entries(DEFAULT_KNOWLEDGE_TOPOLOGY).forEach(([k, prereqs]) => {
-      prereqs.forEach((p) => {
-        if (deps[p]) deps[p].add(k);
-      });
-    });
-    return deps;
+  // 初始化 activeSubCategory
+  useMemo(() => {
+    const subCategories = Object.keys(CATEGORIES[activeTab]);
+    if (subCategories.length > 0 && !activeSubCategory) {
+      setActiveSubCategory(subCategories[0]);
+    }
+  }, [activeTab]);
+
+  // 获取所有知识点
+  const allKnowledge = useMemo(() => {
+    return Object.values(CATEGORIES).flatMap(subCats => 
+      Object.values(subCats).flat()
+    );
   }, []);
 
-  // 递归获取所有前置依赖
-  const getAllPrerequisites = useCallback((knowledge: string, visited = new Set<string>()): Set<string> => {
-    if (visited.has(knowledge)) return new Set();
-    visited.add(knowledge);
-    const prereqs = new Set(DEFAULT_KNOWLEDGE_TOPOLOGY[knowledge] || []);
-    prereqs.forEach((prereq) => {
-      getAllPrerequisites(prereq, visited).forEach((p) => prereqs.add(p));
-    });
-    return prereqs;
-  }, []);
+  // 获取当前大类的所有二级分类
+  const currentSubCategories = useMemo(() => {
+    return Object.keys(CATEGORIES[activeTab] || {});
+  }, [activeTab]);
 
   // 处理复选框变化
   const handleCheckboxChange = (knowledge: string, checked: boolean) => {
     const newSelected = new Set(selected);
     if (checked) {
       newSelected.add(knowledge);
-      // 自动添加所有前置依赖
-      getAllPrerequisites(knowledge).forEach((p) => newSelected.add(p));
     } else {
       newSelected.delete(knowledge);
-      // 检查是否需要移除其他知识点（因为它们可能依赖当前取消的知识点）
-      const toCheck = [knowledge];
-      while (toCheck.length > 0) {
-        const current = toCheck.pop()!;
-        dependents[current]?.forEach((dep) => {
-          if (newSelected.has(dep)) {
-            const prereqs = getAllPrerequisites(dep);
-            prereqs.delete(current);
-            // 如果依赖项的其他前置依赖都不在选中列表中，则移除
-            const hasOtherPrereq = Array.from(prereqs).some((p) => newSelected.has(p));
-            if (!hasOtherPrereq && !newSelected.has(dep)) {
-              // 保留，因为它可能直接被选中
-            }
-          }
-        });
-      }
     }
+    setSelected(newSelected);
+  };
+
+  // 全选当前子分类
+  const selectCurrentSubCategory = () => {
+    const newSelected = new Set(selected);
+    CATEGORIES[activeTab][activeSubCategory].forEach(k => newSelected.add(k));
+    setSelected(newSelected);
+  };
+
+  // 清空当前子分类
+  const clearCurrentSubCategory = () => {
+    const newSelected = new Set(selected);
+    CATEGORIES[activeTab][activeSubCategory].forEach(k => newSelected.delete(k));
     setSelected(newSelected);
   };
 
   // 全选
   const selectAll = () => {
-    const allKnowledge = Object.keys(DEFAULT_KNOWLEDGE_TOPOLOGY);
     setSelected(new Set(allKnowledge));
   };
 
@@ -143,12 +117,16 @@ const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCanc
       alert('请至少选择一个知识点！');
       return;
     }
-    // 按拓扑顺序排序
-    const sortedSelected = Array.from(selected).sort(
-      (a, b) =>
-        Object.keys(DEFAULT_KNOWLEDGE_TOPOLOGY).indexOf(a) -
-        Object.keys(DEFAULT_KNOWLEDGE_TOPOLOGY).indexOf(b)
-    );
+    const sortedSelected = Array.from(selected).sort((a, b) => {
+      const aMainCat = Object.keys(CATEGORIES).find(mainCat => 
+        Object.values(CATEGORIES[mainCat]).some(list => list.includes(a))
+      ) || '';
+      const bMainCat = Object.keys(CATEGORIES).find(mainCat => 
+        Object.values(CATEGORIES[mainCat]).some(list => list.includes(b))
+      ) || '';
+      if (aMainCat !== bMainCat) return aMainCat.localeCompare(bMainCat);
+      return a.localeCompare(b);
+    });
     onConfirm?.({
       knowledge_points: sortedSelected,
       difficulty_range: [minDifficulty, maxDifficulty],
@@ -179,26 +157,52 @@ const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCanc
   return (
     <div className="knowledge-selector">
       <div className="selector-header">
-        <h2>高数知识点选择器</h2>
-        <p className="subtitle">选择需要综合的知识点（前置依赖会自动添加）</p>
+        <h2>知识点选择器</h2>
+        <p className="subtitle">选择需要综合的知识点</p>
       </div>
 
-      {/* 分类标签页 */}
+      {/* 一级分类标签页 */}
       <div className="tabs">
         {Object.keys(CATEGORIES).map((category) => (
           <button
             key={category}
             className={`tab ${activeTab === category ? 'active' : ''}`}
-            onClick={() => setActiveTab(category)}
+            onClick={() => {
+              setActiveTab(category);
+              setActiveSubCategory(Object.keys(CATEGORIES[category])[0]);
+            }}
           >
             {category}
           </button>
         ))}
       </div>
 
+      {/* 二级分类标签页 */}
+      <div className="sub-tabs">
+        {currentSubCategories.map((subCat) => (
+          <button
+            key={subCat}
+            className={`sub-tab ${activeSubCategory === subCat ? 'active' : ''}`}
+            onClick={() => setActiveSubCategory(subCat)}
+          >
+            {subCat}
+          </button>
+        ))}
+      </div>
+
+      {/* 全选/清空当前子分类按钮 */}
+      <div className="sub-category-buttons">
+        <button className="btn btn-small" onClick={selectCurrentSubCategory}>
+          全选当前分类
+        </button>
+        <button className="btn btn-small" onClick={clearCurrentSubCategory}>
+          清空当前分类
+        </button>
+      </div>
+
       {/* 知识点选择区域 */}
       <div className="knowledge-grid">
-        {CATEGORIES[activeTab].map((knowledge) => (
+        {(CATEGORIES[activeTab][activeSubCategory] || []).map((knowledge: string) => (
           <label key={knowledge} className="checkbox-label">
             <input
               type="checkbox"
@@ -212,16 +216,19 @@ const KnowledgeSelector: React.FC<KnowledgeSelectorProps> = ({ onConfirm, onCanc
 
       {/* 已选择显示区域 */}
       <div className="selected-section">
-        <h3>已选择的知识点（含自动添加的前置）</h3>
+        <h3>已选择的知识点</h3>
         <div className="selected-display">
           {selected.size > 0 ? (
-            Array.from(selected)
-              .sort(
-                (a, b) =>
-                  Object.keys(DEFAULT_KNOWLEDGE_TOPOLOGY).indexOf(a) -
-                  Object.keys(DEFAULT_KNOWLEDGE_TOPOLOGY).indexOf(b)
-              )
-              .join(' → ')
+            Array.from(selected).sort((a, b) => {
+              const aMainCat = Object.keys(CATEGORIES).find(mainCat => 
+                Object.values(CATEGORIES[mainCat]).some(list => list.includes(a))
+              ) || '';
+              const bMainCat = Object.keys(CATEGORIES).find(mainCat => 
+                Object.values(CATEGORIES[mainCat]).some(list => list.includes(b))
+              ) || '';
+              if (aMainCat !== bMainCat) return aMainCat.localeCompare(bMainCat);
+              return a.localeCompare(b);
+            }).join(' → ')
           ) : (
             <span className="placeholder">尚未选择任何知识点</span>
           )}

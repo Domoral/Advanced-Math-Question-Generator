@@ -10,6 +10,11 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 
 
+def get_project_root() -> Path:
+    """获取项目根目录（build_index.py 所在目录）"""
+    return Path(__file__).parent
+
+
 def json_to_string(file_path: Path) -> str:
     """将 JSON 无损转化为字符串"""
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -50,10 +55,11 @@ def json_to_string(file_path: Path) -> str:
 
 
 def main():
-    # 配置
-    docs_dir = Path('./data/documents/zy1000')
-    persist_dir = './data/vector_db'
-    model_path = 'BAAI/bge-large-zh'  # 自动从 HuggingFace 缓存加载
+    # 配置（使用相对路径）
+    project_root = get_project_root()
+    docs_dir = project_root / 'data' / 'documents' / 'zy1000'
+    persist_dir = str(project_root / 'data' / 'vector_db')
+    model_path = str(project_root / 'data' / 'embedding' / 'bge-base-zh-v1.5')
     
     print(f"📁 文档目录: {docs_dir}")
     print(f"💾 向量库目录: {persist_dir}")
@@ -78,8 +84,8 @@ def main():
     json_files = list(docs_dir.glob('*.json'))
     print(f"📊 找到 {len(json_files)} 个 JSON 文件\n")
     
-    # 批量处理
-    batch_size = 32
+    # 批量处理 - 减小 batch_size 以减少内存占用
+    batch_size = 8
     documents = []
     metadatas = []
     ids = []
@@ -107,13 +113,15 @@ def main():
             
             # 批量写入
             if len(documents) >= batch_size:
-                embeddings = model.encode(documents)
+                embeddings = model.encode(documents, convert_to_numpy=True)
                 collection.add(
                     ids=ids,
                     documents=documents,
-                    embeddings=embeddings.tolist(),
+                    embeddings=embeddings.astype('float32').tolist(),
                     metadatas=metadatas
                 )
+                # 手动释放内存
+                del documents, metadatas, ids, embeddings
                 documents = []
                 metadatas = []
                 ids = []
@@ -128,9 +136,10 @@ def main():
         collection.add(
             ids=ids,
             documents=documents,
-            embeddings=embeddings.tolist(),
+            embeddings=embeddings.astype('float32').tolist(),
             metadatas=metadatas
         )
+        del embeddings
     
     # 统计
     total = collection.count()

@@ -12,16 +12,21 @@ import os
 from pathlib import Path
 
 
+def get_project_root() -> Path:
+    """Get the project root directory."""
+    core_dir = Path(__file__).parent
+    backend_dir = core_dir.parent
+    return backend_dir.parent
+
+
 def get_default_vector_db_path() -> str:
     """Get the default vector database path relative to project root."""
-    # Get the directory of this file (core/)
-    core_dir = Path(__file__).parent
-    # Get backend directory
-    backend_dir = core_dir.parent
-    # Get project root (backend's parent)
-    project_root = backend_dir.parent
-    # Return the vector_db path
-    return str(project_root / "backend" / "data" / "vector_db")
+    return str(get_project_root() / "backend" / "data" / "vector_db")
+
+
+def get_default_model_path() -> str:
+    """Get the default embedding model path relative to project root."""
+    return str(get_project_root() / "backend" / "data" / "embedding" / "bge-base-zh-v1.5")
 
 
 class RAGRetriever:
@@ -35,7 +40,7 @@ class RAGRetriever:
         self,
         persist_directory: str = None,
         collection_name: str = "math_questions",
-        model_name: str = "BAAI/bge-large-zh"
+        model_name: str = None
     ):
         """
         Initialize RAG retriever.
@@ -43,11 +48,14 @@ class RAGRetriever:
         Args:
             persist_directory: Path to ChromaDB persistence directory
             collection_name: Name of the collection
-            model_name: Embedding model name
+            model_name: Embedding model name or path
         """
         # Use default path if not specified
         if persist_directory is None:
             persist_directory = get_default_vector_db_path()
+        
+        if model_name is None:
+            model_name = get_default_model_path()
         
         self.persist_directory = persist_directory
         self.collection_name = collection_name

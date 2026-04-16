@@ -86,6 +86,8 @@ class QuestionNode:
         self.reward_history: List[float] = []  # History of all rewards received
         self.last_reward: Optional[float] = None  # Last reward received (combined reward from simulate)
         self.this_score: Optional[float] = None  # Current node's own quality score (phase 1 score)
+        self.solving_steps: Optional[str] = None  # Solving steps for this node's problem (from generator)
+        self.deduction_details: Optional[str] = None  # Deduction details from verifier
         self.deduction_points: Dict[str, float] = {}  # Dimension -> deduction score mapping
         self.needs_optimization: bool = False  # Flag indicating if node needs optimization
         self.optimization_attempts: int = 0  # Number of optimization attempts made
@@ -547,6 +549,7 @@ class QuestionMCTS:
             child.metadata['merge_strategy'] = parsed.get('integration_rationale', '')
             child.metadata['solution_method'] = parsed.get('solution_method', '')
             child.metadata['final_answer'] = parsed.get('final_answer', '')
+            child.solving_steps = parsed.get('solving_steps', None)
             
             node.add_child(child)
             print(f"  [Expand] 完成扩展节点 (子节点数: {len(node.children)})")
@@ -604,6 +607,7 @@ class QuestionMCTS:
                 
                 # Save deduction points and this_score for potential optimization
                 node.deduction_points = parsed_verifier.get('scores', {})
+                node.deduction_details = parsed_verifier.get('deduction_details', None)
                 node.this_score = score  # Save the node's own quality score
 
                 # Save if quality meets threshold
@@ -642,8 +646,9 @@ class QuestionMCTS:
 
             # Save deduction points and this_score for potential optimization
             node.deduction_points = parsed_verifier.get('scores', {})
+            node.deduction_details = parsed_verifier.get('deduction_details', None)
             node.this_score = current_score  # Save the node's own quality score
-            
+
             # Save if quality meets threshold
             if current_score >= self.save_threshold:
                 self.save_question(node, current_score)
