@@ -12,16 +12,19 @@ import threading
 import gc
 
 
-def get_project_root() -> Path:
-    """Get the project root directory."""
+def get_backend_dir() -> Path:
+    """Get the backend directory.
+
+    This file is at backend/src/core/embedding_manager.py,
+    so we need to go up 2 levels to get backend.
+    """
     core_dir = Path(__file__).parent
-    backend_dir = core_dir.parent
-    return backend_dir.parent
+    return core_dir.parent.parent
 
 
 def get_default_model_path() -> str:
-    """Get the default embedding model path relative to project root."""
-    return str(get_project_root() / "backend" / "data" / "embedding" / "bge-base-zh-v1.5")
+    """Get the default embedding model path relative to backend directory."""
+    return str(get_backend_dir() / "data" / "embedding" / "bge-base-zh-v1.5")
 
 
 class EmbeddingManager:

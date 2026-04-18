@@ -56,10 +56,10 @@ def json_to_string(file_path: Path) -> str:
 
 def main():
     # 配置（使用相对路径）
-    project_root = get_project_root()
-    docs_dir = project_root / 'data' / 'documents' / 'zy1000'
-    persist_dir = str(project_root / 'data' / 'vector_db')
-    model_path = str(project_root / 'data' / 'embedding' / 'bge-base-zh-v1.5')
+    backend_dir = get_backend_dir()
+    docs_dir = backend_dir / 'data' / 'documents' / 'zy1000'
+    persist_dir = str(backend_dir / 'data' / 'vector_db')
+    model_path = str(backend_dir / 'data' / 'embedding' / 'bge-base-zh-v1.5')
     
     print(f"📁 文档目录: {docs_dir}")
     print(f"💾 向量库目录: {persist_dir}")

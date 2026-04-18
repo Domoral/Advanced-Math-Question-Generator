@@ -90,6 +90,8 @@ class QuestionNode:
         self.solving_steps: Optional[str] = None  # Solving steps for this node's problem (from generator)
         self.deduction_details: Optional[str] = None  # Deduction details from verifier
         self.deduction_points: str = ""  # Natural language description of deduction points
+        self.novelty_score: Optional[float] = None  # Novelty score from novelty verifier (0-1)
+        self.llm_score: Optional[float] = None  # LLM verifier score (0-10)
         self.needs_optimization: bool = False  # Flag indicating if node needs optimization
         self.optimization_attempts: int = 0  # Number of optimization attempts made
         self.max_optimization_attempts: int = 3  # Maximum optimization attempts allowed
@@ -304,11 +306,11 @@ class QuestionMCTS:
         self,
         exploration_weight: float = 1.414,
         alpha: float = 0.5,
-        save_threshold: float = 7.5,
+        save_threshold: float = 8.4,
         output_dir: str = None,  # Default to project data directory
         difficulty_range: tuple = (0.3, 0.7),
         question_type: str = "计算题",
-        need_optimize_threshold: float = 6.0,  # Threshold below which nodes need optimization
+        need_optimize_threshold: float = 7.5,  # Threshold below which nodes need optimization
         use_rag: bool = False  # Whether to use RAG for retrieving reference examples
     ):
         """
@@ -534,9 +536,7 @@ class QuestionMCTS:
             
             print(f"  [Expand] Parser 提取结果:")
             print(f"    - problem_statement: {repr(parsed.get('problem_statement', 'NOT FOUND'))}")
-            print(f"    - integration_rationale: {repr(parsed.get('integration_rationale', 'NOT FOUND'))}")
-            print(f"    - final_answer: {repr(parsed.get('final_answer', 'NOT FOUND'))}")
-            print(f"    - solution_path: {repr(parsed.get('solution_path', 'NOT FOUND'))}")
+            print(f"    - solving_steps: {repr(parsed.get('solving_steps', 'NOT FOUND'))}")
             
             # Create child node
             child = QuestionNode(
@@ -548,9 +548,6 @@ class QuestionMCTS:
             
             # Copy metadata
             child.metadata['generation_step'] = node.depth() + 1
-            child.metadata['merge_strategy'] = parsed.get('integration_rationale', '')
-            child.metadata['solution_method'] = parsed.get('solution_method', '')
-            child.metadata['final_answer'] = parsed.get('final_answer', '')
             child.solving_steps = parsed.get('solving_steps', None)
             
             node.add_child(child)
@@ -588,70 +585,8 @@ class QuestionMCTS:
         
         # Initialize novelty verifier
         novelty_verifier = NoveltyVerifier()
-        
-        # Case A: Terminal node
-        if is_terminal:
-            try:
-                # LLM verifier
-                verifier_output = verifier(node, difficulty_range=self.difficulty_range)
-                print(f"    [Simulate] Verifier 原始输出:")
-                print(f"{'='*60}")
-                print(verifier_output)
-                print(f"{'='*60}")
-                
-                parsed_verifier = parse_verifier_output(verifier_output)
-                llm_score = extract_score(verifier_output)
-                if llm_score is None:
-                    llm_score = 0.0
-                
-                # Novelty verifier
-                novelty_score = novelty_verifier.compute_novelty(node)
-                
-                # Combined score
-                score = llm_score + novelty_score
-                
-                # Build deduction points description
-                # Start with verifier's deduction details
-                deduction_points = parsed_verifier.get('deduction_details', "") or ""
-                
-                # Append novelty deduction if below threshold
-                if novelty_score < 0.4:
-                    novelty_deduction = f"- 新颖性不足: 新颖度得分 {novelty_score:.2f} < 0.4，题目与题库中现有题目过于相似"
-                    if deduction_points:
-                        deduction_points += "\n" + novelty_deduction
-                    else:
-                        deduction_points = novelty_deduction
-                
-                node.deduction_points = deduction_points if deduction_points else "符合要求"
-                
-                # Also save to deduction_details for backward compatibility
-                node.deduction_details = node.deduction_points
-                
-                print(f"    [Simulate] Verifier 详细评价:")
-                print(f"      - LLM总分: {llm_score:.2f}")
-                print(f"      - 新颖度: {novelty_score:.2f}")
-                print(f"      - 综合总分: {score:.2f}")
-                for dim_name, dim_score in parsed_verifier['scores'].items():
-                    print(f"      - {dim_name}: {dim_score}分")
-                if parsed_verifier['overall_evaluation']:
-                    print(f"      - 总体评估: {parsed_verifier['overall_evaluation'][:100]}...")
-                
-                node.this_score = score  # Save the node's own quality score
 
-                # Save if quality meets threshold
-                if score >= self.save_threshold:
-                    self.save_question(node, score)
-                    print(f"  [Simulate] 完成评估，得分: {score:.2f} (LLM:{llm_score:.2f} + Novelty:{novelty_score:.2f}) (已保存)")
-                else:
-                    print(f"  [Simulate] 完成评估，得分: {score:.2f} (LLM:{llm_score:.2f} + Novelty:{novelty_score:.2f})")
-
-                return score
-            except Exception as e:
-                print(f"  [Simulate] 评估失败: {str(e)}")
-                return 0.0
-
-        # Case B: Non-terminal node - two-phase evaluation
-        # Phase 1: Evaluate current node
+        # Phase 1: Evaluate current node (for both terminal and non-terminal)
         print(f"    [Simulate-Phase1] 评估当前节点...")
         try:
             # LLM verifier
@@ -663,11 +598,15 @@ class QuestionMCTS:
 
             parsed_verifier = parse_verifier_output(verifier_output)
             llm_current_score = extract_score(verifier_output)
+            print(f"    [Simulate-Phase1] Extracted LLM score: {llm_current_score}")
             if llm_current_score is None:
+                print(f"    [Simulate-Phase1] Warning: Could not extract score from verifier output")
                 llm_current_score = 0.0
 
             # Novelty verifier
+            print(f"    [Simulate-Phase1] 调用 Novelty Verifier 计算新颖度...")
             novelty_current_score = novelty_verifier.compute_novelty(node)
+            print(f"    [Simulate-Phase1] Novelty Verifier 计算完成: {novelty_current_score:.4f}")
 
             # Combined score
             current_score = llm_current_score + novelty_current_score
@@ -685,7 +624,7 @@ class QuestionMCTS:
                 else:
                     deduction_points = novelty_deduction
 
-            node.deduction_points = deduction_points if deduction_points else "满分"
+            node.deduction_points = deduction_points if deduction_points else "符合要求"
 
             # Also save to deduction_details for backward compatibility
             node.deduction_details = node.deduction_points
@@ -696,22 +635,30 @@ class QuestionMCTS:
             print(f"      - 综合总分: {current_score:.2f}")
             for dim_name, score_val in parsed_verifier['scores'].items():
                 print(f"      - {dim_name}: {score_val}分")
-            if parsed_verifier['overall_evaluation']:
-                print(f"      - 总体评估: {parsed_verifier['overall_evaluation'][:100]}...")
 
             node.this_score = current_score  # Save the node's own quality score
+            node.llm_score = llm_current_score  # Save LLM score
+            node.novelty_score = novelty_current_score  # Save novelty score
 
             # Save if quality meets threshold
             if current_score >= self.save_threshold:
-                self.save_question(node, current_score)
+                self.save_question(node, current_score, llm_score=llm_current_score, novelty_score=novelty_current_score)
                 print(f"    [Simulate-Phase1] 当前节点得分: {current_score:.2f} (LLM:{llm_current_score:.2f} + Novelty:{novelty_current_score:.2f}) (已保存)")
             else:
                 print(f"    [Simulate-Phase1] 当前节点得分: {current_score:.2f} (LLM:{llm_current_score:.2f} + Novelty:{novelty_current_score:.2f})")
         except Exception as e:
-            print(f"    [Simulate-Phase1] 评估失败: {str(e)}")
+            import traceback
+            print(f"    [Simulate-Phase1] 评估失败: {type(e).__name__}: {str(e)}")
+            print(f"    [Simulate-Phase1] 详细错误信息:")
+            traceback.print_exc()
             current_score = 0.0
-        
-        # Phase 2: Evaluate potential (partial aggregation)
+
+        # For terminal node, return current score directly (no Phase 2)
+        if is_terminal:
+            print(f"  [Simulate] 终端节点评估完成，得分: {current_score:.2f}")
+            return current_score
+
+        # Phase 2: Evaluate potential (only for non-terminal nodes)
         print(f"    [Simulate-Phase2] 评估潜在能力...")
         try:
             # Take at most first 3 remaining knowledge points
@@ -726,9 +673,7 @@ class QuestionMCTS:
                 
                 print(f"    [Simulate-Phase2] Parser 提取结果:")
                 print(f"      - problem_statement: {repr(virtual_parsed.get('problem_statement', 'NOT FOUND'))}")
-                print(f"      - integration_rationale: {repr(virtual_parsed.get('integration_rationale', 'NOT FOUND'))}")
-                print(f"      - final_answer: {repr(virtual_parsed.get('final_answer', 'NOT FOUND'))}")
-                print(f"      - solution_path: {repr(virtual_parsed.get('solution_path', 'NOT FOUND'))}")
+                print(f"      - solving_steps: {repr(virtual_parsed.get('solving_steps', 'NOT FOUND'))}")
                 
                 # Create temporary node for verification
                 temp_node = QuestionNode(
@@ -748,9 +693,11 @@ class QuestionMCTS:
                 llm_potential_score = extract_score(virtual_verifier_output)
                 if llm_potential_score is None:
                     llm_potential_score = 0.0
-                
+
                 # Novelty verifier for virtual node
+                print(f"    [Simulate-Phase2] 调用 Novelty Verifier 计算虚拟节点新颖度...")
                 novelty_potential_score = novelty_verifier.compute_novelty(temp_node)
+                print(f"    [Simulate-Phase2] Novelty Verifier 计算完成: {novelty_potential_score:.4f}")
 
                 # Combined score for virtual node
                 potential_score = llm_potential_score + novelty_potential_score
@@ -767,10 +714,14 @@ class QuestionMCTS:
                     else:
                         virtual_deduction_points = virtual_novelty_deduction
 
-                temp_node.deduction_points = virtual_deduction_points if virtual_deduction_points else "满分"
+                temp_node.deduction_points = virtual_deduction_points if virtual_deduction_points else "符合要求"
 
                 # Also save to deduction_details for backward compatibility
                 temp_node.deduction_details = temp_node.deduction_points
+
+                # Save scores to temp_node
+                temp_node.llm_score = llm_potential_score
+                temp_node.novelty_score = novelty_potential_score
 
                 print(f"    [Simulate-Phase2] Verifier 详细评价:")
                 print(f"      - LLM总分: {llm_potential_score:.2f}")
@@ -778,14 +729,12 @@ class QuestionMCTS:
                 print(f"      - 综合总分: {potential_score:.2f}")
                 for dim_name, dim_score in virtual_parsed_verifier['scores'].items():
                     print(f"      - {dim_name}: {dim_score}分")
-                if virtual_parsed_verifier['overall_evaluation']:
-                    print(f"      - 总体评估: {virtual_parsed_verifier['overall_evaluation'][:100]}...")
                 print(f"    [Simulate-Phase2] 潜在得分: {potential_score:.2f} (LLM:{llm_potential_score:.2f} + Novelty:{novelty_potential_score:.2f})")
-                
+
                 # Save virtual question if quality meets threshold
                 if potential_score >= self.save_threshold:
                     print(f"    [Simulate-Phase2] 虚拟节点得分达标，保存中间产物...")
-                    self.save_question(temp_node, potential_score, is_virtual=True)
+                    self.save_question(temp_node, potential_score, is_virtual=True, llm_score=llm_potential_score, novelty_score=novelty_potential_score)
                     print(f"    [Simulate-Phase2] 虚拟节点已保存")
                 
                 # Clean up virtual node immediately (important for memory management)
@@ -795,7 +744,10 @@ class QuestionMCTS:
                 potential_score = current_score
                 print(f"    [Simulate-Phase2] 无剩余知识点，跳过")
         except Exception as e:
-            print(f"    [Simulate-Phase2] 评估失败: {str(e)}")
+            import traceback
+            print(f"    [Simulate-Phase2] 评估失败: {type(e).__name__}: {str(e)}")
+            print(f"    [Simulate-Phase2] 详细错误信息:")
+            traceback.print_exc()
             potential_score = 0.0
         
         # Phase 3: Combine scores
@@ -803,90 +755,103 @@ class QuestionMCTS:
         print(f"  [Simulate] 完成评估，综合得分: {reward:.2f} (当前{current_score:.2f} * {self.alpha} + 潜在{potential_score:.2f} * {1-self.alpha})")
         return reward
     
-    def save_question(self, node: QuestionNode, score: float, is_virtual: bool = False):
+    def save_question(self, node: QuestionNode, score: float, is_virtual: bool = False,
+                      llm_score: Optional[float] = None, novelty_score: Optional[float] = None):
         """
         Save a high-quality question to JSON file and Markdown file.
-        
+
         Args:
             node: The QuestionNode containing the question to save
             score: The quality score from verifier (>= save_threshold)
             is_virtual: Whether this is a virtual node (default: False)
+            llm_score: LLM verifier score (0-10)
+            novelty_score: Novelty verifier score (0-1)
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         if is_virtual:
             prefix = "virtual"
         elif node.is_terminal():
             prefix = "terminal"
         else:
             prefix = "intermediate"
-        
+
         filename = f"{prefix}_{timestamp}.json"
         filepath = os.path.join(self.output_dir, filename)
 
         # Get solving steps from node attribute
         solving_steps = getattr(node, 'solving_steps', None) or ""
-        final_answer = node.metadata.get('final_answer', '')
 
         # Get question type and difficulty range
         question_type = getattr(node, 'question_type', '计算题')
         difficulty_range = getattr(node, 'difficulty_range', (0.3, 0.7))
 
+        # Get scores from node if not provided
+        if llm_score is None:
+            llm_score = getattr(node, 'llm_score', None) or 0.0
+        if novelty_score is None:
+            novelty_score = getattr(node, 'novelty_score', None) or 0.0
+
         data = {
             "question": node.question,
             "solving_steps": solving_steps,
-            "final_answer": final_answer,
             "question_type": question_type,
             "difficulty_range": difficulty_range,
             "integrated_knowledge": sorted(list(node.integrated_knowledge)),
             "quality_score": score,
+            "llm_score": llm_score,
+            "novelty_score": novelty_score,
             "timestamp": timestamp,
             "is_virtual": is_virtual
         }
 
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        
+
         # Also save as Markdown file
-        self._save_markdown(node, score, prefix, timestamp, is_virtual)
+        self._save_markdown(node, score, prefix, timestamp, is_virtual, llm_score, novelty_score)
     
-    def _save_markdown(self, node: QuestionNode, score: float, prefix: str, timestamp: str, is_virtual: bool = False):
+    def _save_markdown(self, node: QuestionNode, score: float, prefix: str, timestamp: str,
+                        is_virtual: bool = False, llm_score: Optional[float] = None,
+                        novelty_score: Optional[float] = None):
         """
         Save question as Markdown file.
-        
+
         Args:
             node: The QuestionNode containing the question to save
             score: The quality score from verifier
             prefix: Filename prefix (virtual/terminal/intermediate)
             timestamp: Timestamp string
             is_virtual: Whether this is a virtual node
+            llm_score: LLM verifier score (0-10)
+            novelty_score: Novelty verifier score (0-1)
         """
         md_filename = f"{prefix}_{timestamp}.md"
         md_filepath = os.path.join(self.output_dir, md_filename)
-        
+
         # Helper function to process LaTeX for Markdown
         def process_latex_for_markdown(text: str) -> str:
             """Process LaTeX text to make it compatible with Markdown preview."""
             if not text:
                 return text
-            
+
             # First, convert double backslashes to single backslashes
             text = text.replace('\\\\', '\\')
-            
+
             # Replace \[ ... \] with $$ ... $$ (display math)
             import re
             text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
-            
+
             # Replace \( ... \) with $ ... $ (inline math)
             text = re.sub(r'\\\((.*?)\\\)', r'$\1$', text, flags=re.DOTALL)
-            
+
             # Handle standalone math environments (equation, align, etc.)
             # Wrap environment blocks with $$
             env_pattern = r'(\\begin\{(equation|align|align\*|gather|gather\*|multline|multline\*)\}.*?\\end\{\2\})'
             text = re.sub(env_pattern, r'$$\1$$', text, flags=re.DOTALL)
-            
+
             return text
-        
+
         # Process question text
         question_text = process_latex_for_markdown(node.question)
 
@@ -894,9 +859,14 @@ class QuestionMCTS:
         question_type = getattr(node, 'question_type', '计算题')
         difficulty_range = getattr(node, 'difficulty_range', (0.3, 0.7))
 
-        # Get solving steps from node attribute and final answer from metadata
+        # Get solving steps from node attribute
         solving_steps = process_latex_for_markdown(getattr(node, 'solving_steps', None) or "")
-        final_answer = process_latex_for_markdown(node.metadata.get('final_answer', ''))
+
+        # Use provided scores or get from node
+        if llm_score is None:
+            llm_score = getattr(node, 'llm_score', None) or 0.0
+        if novelty_score is None:
+            novelty_score = getattr(node, 'novelty_score', None) or 0.0
 
         # Build markdown content
         md_content = f"""# 高等数学综合题
@@ -913,16 +883,10 @@ class QuestionMCTS:
 
 ---
 
-## 最终答案
-
-{final_answer if final_answer else "（暂无答案）"}
-
----
-
 ## 题目信息
 
 - **题型**: {question_type}
-- **质量评分**: {score:.1f}/10.0 (LLM: {score - min(score, 1.0):.1f} + 新颖度: {min(score, 1.0):.1f})
+- **质量评分**: {score:.1f}/10.0 (LLM: {llm_score:.1f} + 新颖度: {novelty_score:.2f})
 - **知识点**: {', '.join(sorted(node.integrated_knowledge)) if node.integrated_knowledge else '无'}
 - **节点类型**: {'虚拟节点' if is_virtual else ('终端节点' if node.is_terminal() else '中间节点')}
 - **生成时间**: {timestamp}

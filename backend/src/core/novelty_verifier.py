@@ -26,16 +26,19 @@ if TYPE_CHECKING:
     from question_node import QuestionNode
 
 
-def get_project_root() -> Path:
-    """Get the project root directory."""
+def get_backend_dir() -> Path:
+    """Get the backend directory.
+    
+    This file is at backend/src/core/novelty_verifier.py,
+    so we need to go up 2 levels to get backend.
+    """
     core_dir = Path(__file__).parent
-    backend_dir = core_dir.parent
-    return backend_dir.parent
+    return core_dir.parent.parent
 
 
 def get_default_vector_db_path() -> str:
-    """Get the default vector database path relative to project root."""
-    return str(get_project_root() / "backend" / "data" / "vector_db")
+    """Get the default vector database path relative to backend directory."""
+    return str(get_backend_dir() / "data" / "vector_db")
 
 
 class NoveltyVerifier:
@@ -199,49 +202,68 @@ class NoveltyVerifier:
         Returns:
             Novelty score between 0 and 1 (higher = more novel)
         """
-        # Use instance defaults if not specified
-        alpha = alpha if alpha is not None else self.alpha
-        beta = beta if beta is not None else self.beta
-        k = k if k is not None else self.k
+        print(f"[NoveltyVerifier] 开始计算新颖度...")
 
-        # Build query text
-        query_text = self._build_query_text(node)
-        print(f"[NoveltyVerifier] Query text length: {len(query_text)} chars")
+        try:
+            # Use instance defaults if not specified
+            alpha = alpha if alpha is not None else self.alpha
+            beta = beta if beta is not None else self.beta
+            k = k if k is not None else self.k
+            print(f"[NoveltyVerifier] 参数: alpha={alpha}, beta={beta}, k={k}")
 
-        # Get embedding
-        query_embedding = self._get_embedding(query_text)
+            # Build query text
+            print(f"[NoveltyVerifier] 构建查询文本...")
+            query_text = self._build_query_text(node)
+            print(f"[NoveltyVerifier] 查询文本长度: {len(query_text)} 字符")
+            print(f"[NoveltyVerifier] 查询文本预览: {query_text[:100]}...")
 
-        # Search for similar questions
-        search_k = max(k, 5)  # Get at least k results
-        results = self._search_similar(query_embedding, top_k=search_k)
+            # Get embedding
+            print(f"[NoveltyVerifier] 获取embedding向量...")
+            query_embedding = self._get_embedding(query_text)
+            print(f"[NoveltyVerifier] Embedding维度: {query_embedding.shape}")
 
-        if not results:
-            print("[NoveltyVerifier] No similar questions found, returning max novelty")
-            return 1.0
+            # Search for similar questions
+            search_k = max(k, 5)  # Get at least k results
+            print(f"[NoveltyVerifier] 搜索相似题目 (top_k={search_k})...")
+            results = self._search_similar(query_embedding, top_k=search_k)
+            print(f"[NoveltyVerifier] 找到 {len(results)} 个相似题目")
 
-        # Extract top-k similarities
-        top_k_results = results[:k]
-        similarities = [r["cosine_similarity"] for r in top_k_results]
+            if not results:
+                print("[NoveltyVerifier] 未找到相似题目,返回最大新颖度 1.0")
+                return 1.0
 
-        # Calculate max_sim
-        max_sim = max(similarities)
+            # Extract top-k similarities
+            top_k_results = results[:k]
+            similarities = [r["cosine_similarity"] for r in top_k_results]
+            print(f"[NoveltyVerifier] Top-{k} 相似度: {[f'{s:.4f}' for s in similarities]}")
 
-        # Calculate H_topk (harmonic mean of top-k similarities)
-        H_topk = self._harmonic_mean(similarities)
+            # Calculate max_sim
+            max_sim = max(similarities)
+            print(f"[NoveltyVerifier] 最大相似度 max_sim={max_sim:.4f}")
 
-        # Compute combined similarity
-        combined_sim = beta * max_sim + (1 - beta) * H_topk
+            # Calculate H_topk (harmonic mean of top-k similarities)
+            H_topk = self._harmonic_mean(similarities)
+            print(f"[NoveltyVerifier] 调和均值 H_topk={H_topk:.4f}")
 
-        # Apply non-linear stretch and compute novelty
-        novelty = 1 - (combined_sim ** alpha)
+            # Compute combined similarity
+            combined_sim = beta * max_sim + (1 - beta) * H_topk
+            print(f"[NoveltyVerifier] 加权组合相似度 combined={combined_sim:.4f}")
 
-        # Clamp to [0, 1]
-        novelty = max(0.0, min(1.0, novelty))
+            # Apply non-linear stretch and compute novelty
+            novelty = 1 - (combined_sim ** alpha)
+            print(f"[NoveltyVerifier] 原始新颖度 novelty={novelty:.4f}")
 
-        print(f"[NoveltyVerifier] max_sim={max_sim:.4f}, H_topk={H_topk:.4f}, "
-              f"combined={combined_sim:.4f}, novelty={novelty:.4f}")
+            # Clamp to [0, 1]
+            novelty = max(0.0, min(1.0, novelty))
+            print(f"[NoveltyVerifier] 最终新颖度={novelty:.4f}")
 
-        return novelty
+            return novelty
+
+        except Exception as e:
+            print(f"[NoveltyVerifier] 计算新颖度时出错: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise  # Re-raise to let caller handle it
 
 
 def verify_novelty(

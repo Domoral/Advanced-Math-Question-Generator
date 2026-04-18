@@ -49,7 +49,7 @@ class GenerateRequest(BaseModel):
     use_rag: bool = False
     max_iterations: int = 100
     target_leaf_nodes: int = 4
-    save_threshold: float = 9
+    save_threshold: float = 8.4
 
 
 class GenerateResponse(BaseModel):
@@ -89,9 +89,9 @@ generation_tasks = {}  # Store ongoing generation tasks
 
 def get_task_log_path(task_id: str) -> str:
     """Get the log file path for a task."""
-    backend_dir = Path(__file__).parent.parent
-    project_root = backend_dir.parent
-    log_dir = project_root / "backend" / "data" / "logs"
+    # main.py is at backend/src/api/main.py, so we need to go up 3 levels to get backend
+    backend_dir = Path(__file__).parent.parent.parent
+    log_dir = backend_dir / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return str(log_dir / f"{task_id}.log")
 

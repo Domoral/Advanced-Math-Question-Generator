@@ -12,15 +12,17 @@ import time
 from typing import Optional, TYPE_CHECKING
 from dotenv import load_dotenv
 from openai import OpenAI
+from pathlib import Path
 
-from prompt_templates_CN import prompt_templates
+from core.prompt_templates_CN import prompt_templates
 
 if TYPE_CHECKING:
     from question_node import QuestionNode
 
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env file in the same directory as this module
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # Initialize OpenAI client with DeepSeek API
 client = OpenAI(
@@ -197,13 +199,18 @@ def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None,
     
     # Handle difficulty_range
     difficulty_str = f"{difficulty_range[0]:.1f}-{difficulty_range[1]:.1f}" if difficulty_range else "0.3-0.7"
-    
+
+    # Get solving_steps from node
+    solving_steps = getattr(node, 'solving_steps', None) or "未提供解题步骤"
+    print(f"[DEBUG] solving_steps: {solving_steps[:100]}..." if len(solving_steps) > 100 else f"[DEBUG] solving_steps: {solving_steps}")
+
     # Format the prompt
     prompt = prompt_templates["question_verifier"].format(
         problem_statement=problem_statement,
         required_skills=required_skills,
         reference_examples=reference_examples,
-        difficulty_range=difficulty_str
+        difficulty_range=difficulty_str,
+        solving_steps=solving_steps
     )
     
     print(f"[DEBUG] Prompt 长度: {len(prompt)}")
@@ -297,91 +304,45 @@ def extract_score(verifier_output: str) -> Optional[float]:
     Returns:
         The extracted score as float, or None if not found
     """
+    print(f"[DEBUG extract_score] 输入长度: {len(verifier_output)}")
+    print(f"[DEBUG extract_score] 最后200字符: {repr(verifier_output[-200:])}")
+    
     match = re.search(r'\\boxed\{(\d+(?:\.\d+)?)\}', verifier_output)
     if match:
+        print(f"[DEBUG extract_score] 匹配成功: {match.group(1)}")
         return float(match.group(1))
+    
+    print(f"[DEBUG extract_score] 未找到 \\boxed{{}} 模式")
+    # Try alternative patterns
+    alt_match = re.search(r'boxed\{(\d+(?:\.\d+)?)\}', verifier_output)
+    if alt_match:
+        print(f"[DEBUG extract_score] 替代模式匹配成功: {alt_match.group(1)}")
+        return float(alt_match.group(1))
     
     return None
 
 
 def parse_generator_output(output: str) -> dict:
     """
-    Parse the key-value output from generator function.
-    Supports both English and Chinese format outputs.
+    Parse the output from generator function.
+    Matches the prompt template output format.
     
     Args:
         output: The raw output from generator function
         
     Returns:
-        Dictionary containing parsed fields (problem_statement, final_answer, etc.)
+        Dictionary containing parsed fields:
+        - problem_statement: The generated problem
+        - solving_steps: The solving steps
     """
     result = {}
     
-    # Extract triple-quoted fields (English format)
-    # problem_statement
-    match = re.search(r'problem_statement:\s*"""(.*?)"""', output, re.DOTALL)
+    # Extract 新题目 (New Problem) -> problem_statement
+    match = re.search(r'###\s*新题目\s*\n(.*?)(?=###|$)', output, re.DOTALL)
     if match:
         result['problem_statement'] = match.group(1).strip()
     
-    # solution_path
-    match = re.search(r'solution_path:\s*"""(.*?)"""', output, re.DOTALL)
-    if match:
-        result['solution_path'] = match.group(1).strip()
-    
-    # Extract single-line fields (English format)
-    # integration_rationale
-    match = re.search(r'integration_rationale:\s*(.+?)(?:\n|$)', output)
-    if match:
-        result['integration_rationale'] = match.group(1).strip()
-    
-    # final_answer
-    match = re.search(r'final_answer:\s*(.+?)(?:\n|$)', output)
-    if match:
-        result['final_answer'] = match.group(1).strip()
-    
-    # difficulty_estimate
-    match = re.search(r'difficulty_estimate:\s*(\d+)', output)
-    if match:
-        result['difficulty_estimate'] = int(match.group(1))
-    
-    # prerequisite_skills
-    match = re.search(r'prerequisite_skills:\s*(.+?)(?:\n|$)', output)
-    if match:
-        skills = match.group(1).strip()
-        result['prerequisite_skills'] = [s.strip() for s in skills.split(',')]
-    
-    # Extract Chinese format fields (if English format not found)
-    # 新题目 (New Problem) -> problem_statement
-    if 'problem_statement' not in result:
-        match = re.search(r'###\s*新题目\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-        if match:
-            result['problem_statement'] = match.group(1).strip()
-    
-    # 解题方法 (Solution Method) -> solution_method
-    if 'solution_method' not in result:
-        match = re.search(r'###\s*解题方法\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-        if match:
-            result['solution_method'] = match.group(1).strip()
-    
-    # 预期解题路径 (Expected Solution Path) -> solution_path (for backward compatibility)
-    if 'solution_path' not in result:
-        match = re.search(r'###\s*预期解题路径\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-        if match:
-            result['solution_path'] = match.group(1).strip()
-    
-    # 融合原理 (Integration Rationale) -> integration_rationale
-    if 'integration_rationale' not in result:
-        match = re.search(r'###\s*融合原理\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-        if match:
-            result['integration_rationale'] = match.group(1).strip()
-    
-    # 最终答案 (Final Answer) -> final_answer
-    if 'final_answer' not in result:
-        match = re.search(r'###\s*最终答案\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-        if match:
-            result['final_answer'] = match.group(1).strip()
-
-    # 解题步骤 (Solving Steps) -> solving_steps
+    # Extract 解题步骤 (Solving Steps) -> solving_steps
     match = re.search(r'###\s*解题步骤\s*\n(.*?)(?=###|$)', output, re.DOTALL)
     if match:
         result['solving_steps'] = match.group(1).strip()
@@ -400,18 +361,17 @@ def parse_verifier_output(output: str) -> dict:
         Dictionary containing parsed evaluation details:
         - solution_attempt: The verifier's attempt to solve the problem
         - final_answer: The answer the verifier obtained
-        - scores: Dict of individual dimension scores (1-6)
+        - scores: Dict of individual dimension scores
         - total_score: The total score from \boxed{}
         - analyses: Dict of analysis text for each dimension
-        - overall_evaluation: The overall evaluation summary
+        - deduction_details: Details of deduction points
     """
     result = {
         'solution_attempt': '',
         'final_answer': '',
         'scores': {},
         'analyses': {},
-        'total_score': None,
-        'overall_evaluation': ''
+        'total_score': None
     }
     
     # Extract solution attempt
@@ -452,11 +412,6 @@ def parse_verifier_output(output: str) -> dict:
     match = re.search(r'###\s*扣分点详情\s*\n(.*?)(?=---|\*\*最终得分框|$)', output, re.DOTALL)
     if match:
         result['deduction_details'] = match.group(1).strip()
-
-    # Extract overall evaluation
-    match = re.search(r'###\s*总体评估\s*\n(.*?)(?=---|$)', output, re.DOTALL)
-    if match:
-        result['overall_evaluation'] = match.group(1).strip()
 
     # Extract total score from \boxed{}
     match = re.search(r'\\boxed\{(\d+(?:\.\d+)?)\}', output)
