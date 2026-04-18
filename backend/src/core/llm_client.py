@@ -428,7 +428,7 @@ def parse_verifier_output(output: str) -> dict:
     dimensions = [
         ('1', '单一答案要求'),
         ('2', '精确答案要求'),
-        ('3', '双技能融合'),
+        ('3', '技能融合'),
         ('4', '清晰性和完整性'),
         ('5', '计算可行性'),
         ('6', '语法和表达'),
@@ -466,7 +466,7 @@ def parse_verifier_output(output: str) -> dict:
     return result
 
 
-def optimizer(node: 'QuestionNode', deduction_points: dict, max_retries: int = 3) -> str:
+def optimizer(node: 'QuestionNode', deduction_points: str, max_retries: int = 3) -> str:
     """
     Optimize an existing math problem based on verifier feedback.
     
@@ -474,7 +474,7 @@ def optimizer(node: 'QuestionNode', deduction_points: dict, max_retries: int = 3
     
     Args:
         node: The QuestionNode containing the problem to optimize
-        deduction_points: Dictionary mapping dimension names to deduction scores
+        deduction_points: Natural language description of deduction points
         max_retries: Maximum number of retry attempts when API returns empty content (default: 3)
         
     Returns:
@@ -492,12 +492,8 @@ def optimizer(node: 'QuestionNode', deduction_points: dict, max_retries: int = 3
     print(f"[DEBUG] last_reward: {last_reward}")
     print(f"[DEBUG] deduction_points: {deduction_points}")
     
-    # Format deduction details
-    deduction_details = "\n".join([
-        f"- {dim}: 扣了 {1.0 - score:.1f} 分 (得分 {score}/1.0)"
-        for dim, score in deduction_points.items()
-        if score < 1.0
-    ]) if deduction_points else "无明显扣分点"
+    # Use deduction_points directly as deduction_details
+    deduction_details = deduction_points if deduction_points else "无明显扣分点"
     
     # Get difficulty range and question type from node
     difficulty_range = getattr(node, 'difficulty_range', (0.3, 0.7))
@@ -597,31 +593,19 @@ def parse_optimizer_output(output: str) -> dict:
         
     Returns:
         Dictionary containing parsed fields:
-        - problem_analysis: Analysis of the original problem's issues
-        - optimization_strategy: Strategy for optimization
         - optimized_problem: The optimized problem statement
-        - improvement_notes: Notes on improvements made
+        - solving_steps: Solving steps for the optimized problem
     """
     result = {}
-    
-    # Extract problem analysis
-    match = re.search(r'###\s*问题分析\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-    if match:
-        result['problem_analysis'] = match.group(1).strip()
-    
-    # Extract optimization strategy
-    match = re.search(r'###\s*优化策略\s*\n(.*?)(?=###|$)', output, re.DOTALL)
-    if match:
-        result['optimization_strategy'] = match.group(1).strip()
     
     # Extract optimized problem
     match = re.search(r'###\s*优化后的题目\s*\n(.*?)(?=###|$)', output, re.DOTALL)
     if match:
         result['optimized_problem'] = match.group(1).strip()
     
-    # Extract improvement notes
-    match = re.search(r'###\s*改进说明\s*\n(.*?)(?=###|$)', output, re.DOTALL)
+    # Extract solving steps
+    match = re.search(r'###\s*解题步骤\s*\n(.*?)(?=###|$)', output, re.DOTALL)
     if match:
-        result['improvement_notes'] = match.group(1).strip()
+        result['solving_steps'] = match.group(1).strip()
     
     return result

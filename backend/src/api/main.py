@@ -49,7 +49,7 @@ class GenerateRequest(BaseModel):
     use_rag: bool = False
     max_iterations: int = 100
     target_leaf_nodes: int = 4
-    save_threshold: float = 7.5
+    save_threshold: float = 9
 
 
 class GenerateResponse(BaseModel):
@@ -362,7 +362,7 @@ def run_generation(task_id: str, request: GenerateRequest):
             output_dir=None,  # Use default path
             difficulty_range=request.difficulty_range,
             question_type=request.question_type,
-            need_optimize_threshold=6.0,
+            need_optimize_threshold=7.5,
             use_rag=request.use_rag
         )
         

@@ -17,9 +17,10 @@ Where:
 
 import numpy as np
 from typing import TYPE_CHECKING, Optional, List, Dict
-from sentence_transformers import SentenceTransformer
 import chromadb
 from pathlib import Path
+
+from core.embedding_manager import get_shared_model
 
 if TYPE_CHECKING:
     from question_node import QuestionNode
@@ -35,11 +36,6 @@ def get_project_root() -> Path:
 def get_default_vector_db_path() -> str:
     """Get the default vector database path relative to project root."""
     return str(get_project_root() / "backend" / "data" / "vector_db")
-
-
-def get_default_model_path() -> str:
-    """Get the default embedding model path relative to project root."""
-    return str(get_project_root() / "backend" / "data" / "embedding" / "bge-base-zh-v1.5")
 
 
 class NoveltyVerifier:
@@ -65,16 +61,13 @@ class NoveltyVerifier:
         Args:
             persist_directory: Path to ChromaDB persistence directory
             collection_name: Name of the collection in ChromaDB
-            model_name: Embedding model name or path
+            model_name: Embedding model name or path (deprecated, kept for compatibility)
             alpha: Non-linear stretch parameter (α > 1)
             beta: Weight for max_sim (0 < β < 1)
             k: Number of nearest neighbors to consider
         """
         if persist_directory is None:
             persist_directory = get_default_vector_db_path()
-
-        if model_name is None:
-            model_name = get_default_model_path()
 
         self.persist_directory = persist_directory
         self.collection_name = collection_name
@@ -86,8 +79,8 @@ class NoveltyVerifier:
         self.client = chromadb.PersistentClient(path=persist_directory)
         self.collection = self.client.get_collection(collection_name)
 
-        # Initialize embedding model
-        self.model = SentenceTransformer(model_name)
+        # Use shared embedding model from singleton manager
+        self.model = get_shared_model(model_name)
 
         print(f"[NoveltyVerifier] Loaded collection '{collection_name}' with {self.collection.count()} documents")
 
