@@ -24,7 +24,7 @@ def get_backend_dir() -> Path:
 
 def get_default_model_path() -> str:
     """Get the default embedding model path relative to backend directory."""
-    return str(get_backend_dir() / "data" / "embedding" / "bge-base-zh-v1.5")
+    return str(get_backend_dir() / "data" / "embedding" / "models--BAAI--bge-large-zh" / "snapshots" / "b5d9f5c027e87b6f0b6fa4b614f8f9cdc45ce0e8")
 
 
 class EmbeddingManager:

@@ -49,7 +49,7 @@ class GenerateRequest(BaseModel):
     use_rag: bool = False
     max_iterations: int = 100
     target_leaf_nodes: int = 4
-    save_threshold: float = 8.4
+    save_threshold: float = 9.4
 
 
 class GenerateResponse(BaseModel):
@@ -357,12 +357,12 @@ def run_generation(task_id: str, request: GenerateRequest):
         # Initialize MCTS
         mcts = QuestionMCTS(
             exploration_weight=1.414,
-            alpha=0.5,
+            alpha=0,  # 0 = use only potential_score, 1 = use only current_score, 0.5 = average
             save_threshold=request.save_threshold,
             output_dir=None,  # Use default path
             difficulty_range=request.difficulty_range,
             question_type=request.question_type,
-            need_optimize_threshold=7.5,
+            need_optimize_threshold=8.5,
             use_rag=request.use_rag
         )
         

@@ -9,6 +9,7 @@ from typing import List, Optional, Set, Dict, Any
 from core.llm_client import generator, verifier, extract_score, parse_generator_output, parse_verifier_output, optimizer
 from core.rag_retriever import retrieve_references
 from core.novelty_verifier import NoveltyVerifier
+from core.generation_logger import GenerationLogger
 import math
 import json
 import os
@@ -305,12 +306,12 @@ class QuestionMCTS:
     def __init__(
         self,
         exploration_weight: float = 1.414,
-        alpha: float = 0.5,
-        save_threshold: float = 8.4,
+        alpha: float = 0,
+        save_threshold: float = 9.4,
         output_dir: str = None,  # Default to project data directory
         difficulty_range: tuple = (0.3, 0.7),
         question_type: str = "计算题",
-        need_optimize_threshold: float = 7.5,  # Threshold below which nodes need optimization
+        need_optimize_threshold: float = 8.5,  # Threshold below which nodes need optimization
         use_rag: bool = False  # Whether to use RAG for retrieving reference examples
     ):
         """
@@ -348,6 +349,9 @@ class QuestionMCTS:
         
         # Create output directory if not exists
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Initialize generation logger for tracking all generated questions
+        self.logger = GenerationLogger(self.output_dir)
         
         print(f"[INFO] 输出目录: {self.output_dir}")
         print(f"[INFO] 难度区间: {difficulty_range[0]:.1f} - {difficulty_range[1]:.1f}")
@@ -566,7 +570,7 @@ class QuestionMCTS:
             node.add_child(child)
             return child
     
-    def simulate(self, node: QuestionNode) -> float:
+    def simulate(self, node: QuestionNode, iteration: int = 0) -> float:
         """
         Simulate/rollout from a node to get a reward.
         
@@ -575,6 +579,7 @@ class QuestionMCTS:
         
         Args:
             node: The node to simulate from
+            iteration: Current MCTS iteration number
             
         Returns:
             The combined reward (quality score) obtained
@@ -640,8 +645,18 @@ class QuestionMCTS:
             node.llm_score = llm_current_score  # Save LLM score
             node.novelty_score = novelty_current_score  # Save novelty score
 
+            # Log to CSV (real node)
+            is_saved = current_score >= self.save_threshold
+            self.logger.log_question(
+                iteration=iteration,
+                question_type='real',
+                novelty=novelty_current_score,
+                llm_score=llm_current_score,
+                is_saved=is_saved
+            )
+
             # Save if quality meets threshold
-            if current_score >= self.save_threshold:
+            if is_saved:
                 self.save_question(node, current_score, llm_score=llm_current_score, novelty_score=novelty_current_score)
                 print(f"    [Simulate-Phase1] 当前节点得分: {current_score:.2f} (LLM:{llm_current_score:.2f} + Novelty:{novelty_current_score:.2f}) (已保存)")
             else:
@@ -676,10 +691,12 @@ class QuestionMCTS:
                 print(f"      - solving_steps: {repr(virtual_parsed.get('solving_steps', 'NOT FOUND'))}")
                 
                 # Create temporary node for verification
+                # Inherit difficulty_range and question_type from parent node
                 temp_node = QuestionNode(
                     question=virtual_parsed.get('problem_statement', ''),
                     integrated_knowledge=node.integrated_knowledge | set(knowledge_to_test),
-                    waiting_knowledge=[]  # Virtual node is terminal
+                    waiting_knowledge=[],  # Virtual node is terminal
+                    parent=node  # Set parent to inherit difficulty_range and question_type
                 )
                 
                 # Verify virtual question with LLM verifier
@@ -731,8 +748,18 @@ class QuestionMCTS:
                     print(f"      - {dim_name}: {dim_score}分")
                 print(f"    [Simulate-Phase2] 潜在得分: {potential_score:.2f} (LLM:{llm_potential_score:.2f} + Novelty:{novelty_potential_score:.2f})")
 
+                # Log to CSV (virtual node)
+                is_virtual_saved = potential_score >= self.save_threshold
+                self.logger.log_question(
+                    iteration=iteration,
+                    question_type='virtual',
+                    novelty=novelty_potential_score,
+                    llm_score=llm_potential_score,
+                    is_saved=is_virtual_saved
+                )
+
                 # Save virtual question if quality meets threshold
-                if potential_score >= self.save_threshold:
+                if is_virtual_saved:
                     print(f"    [Simulate-Phase2] 虚拟节点得分达标，保存中间产物...")
                     self.save_question(temp_node, potential_score, is_virtual=True, llm_score=llm_potential_score, novelty_score=novelty_potential_score)
                     print(f"    [Simulate-Phase2] 虚拟节点已保存")
@@ -969,7 +996,7 @@ class QuestionMCTS:
                 print(f"  [信息] 生成新的终端节点 (当前: {self.leaf_count}/{target_leaf_nodes})")
             
             # 3. Simulate
-            reward = self.simulate(selected)
+            reward = self.simulate(selected, iteration=iteration + 1)
             
             # 4. Backpropagate
             self.backpropagate(selected, reward)

@@ -53,13 +53,20 @@ def json_to_string(file_path: Path) -> str:
     
     return '\n'.join(parts)
 
+def get_backend_dir() -> Path:
+    """Get the backend directory.
 
+    This file is at backend/src/core/embedding_manager.py,
+    so we need to go up 2 levels to get backend.
+    """
+    backend_dir = Path(__file__).parent
+    return backend_dir
 def main():
     # 配置（使用相对路径）
     backend_dir = get_backend_dir()
     docs_dir = backend_dir / 'data' / 'documents' / 'zy1000'
     persist_dir = str(backend_dir / 'data' / 'vector_db')
-    model_path = str(backend_dir / 'data' / 'embedding' / 'bge-base-zh-v1.5')
+    model_path = str(backend_dir / 'data' / 'embedding' / 'models--BAAI--bge-large-zh' / 'snapshots' / 'b5d9f5c027e87b6f0b6fa4b614f8f9cdc45ce0e8')
     
     print(f"📁 文档目录: {docs_dir}")
     print(f"💾 向量库目录: {persist_dir}")

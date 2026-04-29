@@ -93,7 +93,7 @@ def generator(node: 'QuestionNode', new_skill: str, reference_examples: Optional
         # Call DeepSeek API
         try:
             print(f"[DEBUG] 开始调用 API... (尝试 {retry_count + 1}/{max_retries})")
-            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.7, max_tokens=6000")
+            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.7, max_tokens=20000")
             
             response = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -102,7 +102,7 @@ def generator(node: 'QuestionNode', new_skill: str, reference_examples: Optional
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=6000
+                max_tokens=20000
             )
             
             print(f"[DEBUG] API 响应对象类型: {type(response)}")
@@ -221,7 +221,7 @@ def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None,
         # Call DeepSeek API
         try:
             print(f"[DEBUG] 开始调用 API... (尝试 {retry_count + 1}/{max_retries})")
-            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.3, max_tokens=12000")
+            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.3, max_tokens=20000")
             
             response = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -230,7 +230,7 @@ def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None,
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,  # Lower temperature for more consistent evaluation
-                max_tokens=12000
+                max_tokens=20000
             )
             
             print(f"[DEBUG] API 响应对象类型: {type(response)}")
@@ -479,7 +479,7 @@ def optimizer(node: 'QuestionNode', deduction_points: str, max_retries: int = 3)
         # Call DeepSeek API
         try:
             print(f"[DEBUG] 开始调用 API... (尝试 {retry_count + 1}/{max_retries})")
-            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.7, max_tokens=6000")
+            print(f"[DEBUG] 请求参数: model={MODEL_NAME}, temperature=0.7, max_tokens=20000")
             
             response = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -488,7 +488,7 @@ def optimizer(node: 'QuestionNode', deduction_points: str, max_retries: int = 3)
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=6000
+                max_tokens=20000
             )
             
             print(f"[DEBUG] API 响应对象类型: {type(response)}")

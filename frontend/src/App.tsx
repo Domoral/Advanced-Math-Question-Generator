@@ -34,7 +34,7 @@ function App() {
           use_rag: result.use_rag,
           max_iterations: 100,
           target_leaf_nodes: 4,
-          save_threshold: 7.5,
+          save_threshold: 9.4,
         }),
       });
 
