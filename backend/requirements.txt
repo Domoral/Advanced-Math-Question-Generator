@@ -16,12 +16,9 @@ python-dotenv>=1.0.0
 # Vector Database for RAG
 chromadb>=0.4.0
 
-# Sentence Transformers for embeddings
-sentence_transformers>=2.2.0
+# Embedding API (SiliconFlow, via OpenAI-compatible client)
+# numpy is used for embedding vector manipulation
+numpy>=1.24.0
 
 # Progress bar
 tqdm>=4.65.0
-
-# GUI (optional, for knowledge_selector.py)
-# tkinter is included with standard Python on Windows
-# On Linux: sudo apt-get install python3-tk

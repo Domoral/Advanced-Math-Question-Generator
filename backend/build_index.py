@@ -1,16 +1,21 @@
 """
 批量建库脚本
-处理 documents/zy1000 中的 JSON 文件，生成 embedding 并存入 ChromaDB
+处理 documents/zy1000 中的 JSON 文件，通过 SiliconFlow Embedding API 生成 embedding 并存入 ChromaDB
 """
 
 import json
+import sys
 from pathlib import Path
 from tqdm import tqdm
 import chromadb
-from sentence_transformers import SentenceTransformer
+
+# 添加 src 目录到 path，以导入 core 模块
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from core.embedding_manager import SiliconFlowEmbedder
 
 
-def get_project_root() -> Path:
+def get_backend_dir() -> Path:
     """获取项目根目录（build_index.py 所在目录）"""
     return Path(__file__).parent
 
@@ -53,27 +58,19 @@ def json_to_string(file_path: Path) -> str:
     
     return '\n'.join(parts)
 
-def get_backend_dir() -> Path:
-    """Get the backend directory.
 
-    This file is at backend/src/core/embedding_manager.py,
-    so we need to go up 2 levels to get backend.
-    """
-    backend_dir = Path(__file__).parent
-    return backend_dir
 def main():
     # 配置（使用相对路径）
     backend_dir = get_backend_dir()
     docs_dir = backend_dir / 'data' / 'documents' / 'zy1000'
     persist_dir = str(backend_dir / 'data' / 'vector_db')
-    model_path = str(backend_dir / 'data' / 'embedding' / 'models--BAAI--bge-large-zh' / 'snapshots' / 'b5d9f5c027e87b6f0b6fa4b614f8f9cdc45ce0e8')
     
     print(f"📁 文档目录: {docs_dir}")
     print(f"💾 向量库目录: {persist_dir}")
     
-    # 初始化
-    print("\n🚀 加载模型...")
-    model = SentenceTransformer(model_path)
+    # 初始化 SiliconFlow Embedding API 客户端
+    print("\n🚀 连接 SiliconFlow Embedding API...")
+    model = SiliconFlowEmbedder()
     
     print("🚀 初始化 ChromaDB...")
     client = chromadb.PersistentClient(path=persist_dir)
@@ -91,8 +88,8 @@ def main():
     json_files = list(docs_dir.glob('*.json'))
     print(f"📊 找到 {len(json_files)} 个 JSON 文件\n")
     
-    # 批量处理 - 减小 batch_size 以减少内存占用
-    batch_size = 8
+    # 批量处理 - 减小 batch_size 以减少 API 调用频率
+    batch_size = 16
     documents = []
     metadatas = []
     ids = []
@@ -120,7 +117,8 @@ def main():
             
             # 批量写入
             if len(documents) >= batch_size:
-                embeddings = model.encode(documents, convert_to_numpy=True)
+                print(f"\n  ↳ 调用 API 生成 {batch_size} 个 embedding...")
+                embeddings = model.encode(documents)
                 collection.add(
                     ids=ids,
                     documents=documents,
@@ -139,6 +137,7 @@ def main():
     
     # 写入剩余文档
     if documents:
+        print(f"\n  ↳ 调用 API 生成 {len(documents)} 个 embedding...")
         embeddings = model.encode(documents)
         collection.add(
             ids=ids,
