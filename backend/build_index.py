@@ -89,7 +89,7 @@ def main():
     print(f"📊 找到 {len(json_files)} 个 JSON 文件\n")
     
     # 批量处理 - 减小 batch_size 以减少 API 调用频率
-    batch_size = 16
+    batch_size = 6
     documents = []
     metadatas = []
     ids = []

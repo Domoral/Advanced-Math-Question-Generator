@@ -72,6 +72,32 @@ class SiliconFlowEmbedder:
         self.client = OpenAI(api_key=self.api_key, base_url=clean_base)
         print(f"[SiliconFlowEmbedder] Initialized: model={self.model}, base_url={clean_base}")
 
+    def _sanitize(self, text: str) -> str:
+        """Fix LaTeX backslash sequences corrupted by Python string escaping.
+
+        When JSON files with LaTeX (e.g. \\\\frac) are loaded by json.load(),
+        Python interprets \\f, \\b, \\v as control characters (formfeed,
+        backspace, vertical tab). This restores them to literal backslash
+        sequences that the embedding API can handle.
+
+        Also replaces LaTeX \\_ (escaped underscore) with plain _ since
+        SiliconFlow API rejects certain backslash combinations.
+        For embedding purposes, \\_ and _ are semantically equivalent.
+        """
+        replacements = {
+            '\f': '\\f',   # form feed  -> \\frac, \\flat
+            '\b': '\\b',   # backspace  -> \\begin, \\beta
+            '\v': '\\v',   # vert tab   -> \\vec
+        }
+        for ctrl_char, latex in replacements.items():
+            text = text.replace(ctrl_char, latex)
+
+        # Fix: \\_ (LaTeX escaped underscore) triggers SiliconFlow API 400 error.
+        # For embedding, _ is semantically equivalent.
+        text = text.replace('\\_', '_')
+
+        return text
+
     def encode(
         self,
         sentences: Union[str, List[str]],
@@ -102,6 +128,9 @@ class SiliconFlowEmbedder:
 
     def _call_api(self, texts: List[str]) -> List[List[float]]:
         """Call SiliconFlow embeddings API with retry logic."""
+        # Sanitize LaTeX control characters before sending
+        texts = [self._sanitize(t) for t in texts]
+
         max_retries = 3
         for attempt in range(max_retries):
             try:

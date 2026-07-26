@@ -357,7 +357,7 @@ def run_generation(task_id: str, request: GenerateRequest):
         # Initialize MCTS
         mcts = QuestionMCTS(
             exploration_weight=1.414,
-            alpha=0,  # 0 = use only potential_score, 1 = use only current_score, 0.5 = average
+            alpha=0.8,  # 0 = use only potential_score, 1 = use only current_score, 0.5 = average
             save_threshold=request.save_threshold,
             output_dir=None,  # Use default path
             difficulty_range=request.difficulty_range,

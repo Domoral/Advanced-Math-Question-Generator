@@ -81,7 +81,12 @@ Advanced-Math-Question-Generator/
 在 `backend/src/core/.env` 中配置 API Key：
 
 ```env
-# DeepSeek LLM（必需）
+# Qwen LLM - 题目生成器（必需）
+QWEN_API_KEY=your_qwen_api_key_here
+QWEN_MODEL=qwen3.7-plus
+QWEN_API_BASE=https://llm-e0yuxebkc2f8ofxa.cn-beijing.maas.aliyuncs.com
+
+# DeepSeek LLM - 题目验证器（必需）
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_API_BASE=https://api.deepseek.com
@@ -198,9 +203,9 @@ sudo crontab -e
 ## 核心模块说明
 
 ### llm_client.py
-DeepSeek API 客户端，负责：
-- `generator()`: 调用 LLM 根据知识点生成融合题目
-- `verifier()`: 调用 LLM 评分和验证题目质量
+双模型 LLM 客户端，避免自验证循环：
+- **Qwen** (`qwen_client`) → `generator()`: 生成融合题目
+- **DeepSeek** (`deepseek_client`) → `verifier()`: 独立评分验证
 - 自动从 `backend/src/core/.env` 加载配置
 
 ### question_node.py

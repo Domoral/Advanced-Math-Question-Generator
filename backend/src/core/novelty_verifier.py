@@ -254,8 +254,8 @@ class NoveltyVerifier:
             print(f"[NoveltyVerifier] 原始新颖度 novelty={novelty:.4f}")
 
             # Multiply by 20 to scale up the score (0.01-0.05 becomes 0.20-1.00)
-            novelty = novelty * 20
-            print(f"[NoveltyVerifier] 乘以20后新颖度={novelty:.4f}")
+            novelty = novelty * 3
+            print(f"[NoveltyVerifier] 乘以3后新颖度={novelty:.4f}")
 
             # Clamp to [0, 1]
             novelty = max(0.0, min(1.0, novelty))
