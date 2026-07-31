@@ -246,7 +246,7 @@ def verifier(node: 'QuestionNode', reference_examples: Optional[str] = None,
                 ],
                 temperature=0.3,  # Lower temperature for more consistent evaluation
                 max_tokens=20000,
-                extra_body= {"enable_thinking": True}
+                extra_body= {"enable_thinking": True},
             )
 
             print(f"[DEBUG] API 响应对象类型: {type(response)}")
